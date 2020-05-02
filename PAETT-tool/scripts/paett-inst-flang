@@ -1,0 +1,2 @@
+#!/bin/bash
+flang -Xclang -paett-inst -L`dirname $0`/../lib $@

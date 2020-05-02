@@ -1,0 +1,2 @@
+#!/bin/bash
+clang -Xclang -paett-freqmod -lpaett_freqmod -L`dirname $0`/../lib $@
