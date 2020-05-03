@@ -1,3 +1,4 @@
 #!/bin/bash
-export PATH=`pwd`/bin:`pwd`/scripts:$PATH
-export LD_LIBRARY_PATH=`pwd`/lib:$LD_LIBRARY_PATH
+ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export PATH=$ROOT/bin:$ROOT/scripts:$PATH
+export LD_LIBRARY_PATH=$ROOT/lib:$LD_LIBRARY_PATH

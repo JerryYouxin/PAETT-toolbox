@@ -1,2 +1,2 @@
 #!/bin/bash
-clang -Xclang -paett-inst -L`dirname $0`/../lib $@
+clang -Xclang -paett-inst -lx86_adapt -lx86_energy -L`dirname $0`/../lib $@

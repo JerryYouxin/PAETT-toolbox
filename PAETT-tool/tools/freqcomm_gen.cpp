@@ -1,4 +1,5 @@
 #include "common.h"
+#include "config.h"
 #include <unordered_map>
 #include <vector>
 // for file control
@@ -368,41 +369,7 @@ namespace {
         }
         virtual bool pruneShortrunningNodes(CallingContextLog* cur) {
             const double OVERHEAD_THRESHOLD = 0.05;
-            return pruneCCTWithThreshold(cur, time_overhead/OVERHEAD_THRESHOLD);
-            // bool prune = true;
-            // std::vector<uint64_t> prunedChildren;
-            // // try to prune its children first to get more accurate time estimation for this node
-            // for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
-            //     bool childPrune = pruneShortrunningNodes(CB->second);
-            //     if(childPrune) {
-            //         prunedChildren.push_back(CB->first);
-            //     }
-            //     prune &= childPrune;
-            // }
-            // // actual prune work of the pruned subtree
-            // for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
-            //     uint64_t key = *CB;
-            //     cur->data.cycle += cur->children[key]->data.cycle;
-            //     for(int i=0;i<cur->data.size;++i) {
-            //         cur->data.eventData[i] += cur->children[key]->data.eventData[i];
-            //     }
-            //     cur->children.erase(key);
-            // }
-            // // if all chldren are pruned, this node may be pruned, so check it
-            // if(prune) {
-            //     // get actual time assumed to be executed exactly in this function (exclude his *valid* children's)
-            //     double time = cur->data.cycle;
-            //     for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
-            //         time += CB->second->data.cycle;
-            //     }
-            //     // now update the time
-            //     time /= cur->data.ncall; // per call time
-            //     // simple and aggresive pruning methodology
-            //     // We define acceptable overhead control threshold (5%)
-            //     const double OVERHEAD_THRESHOLD=0.05;
-            //     prune = (time_overhead/time >= OVERHEAD_THRESHOLD);
-            // }
-            // return prune;
+            return pruneCCTWithThreshold(cur, PRUNE_THRESHOLD);
         }
         std::unordered_map<uint64_t, uint64_t> prunedRegion;
         void __pruneNodesAsRegions(CCTRes* cur) {

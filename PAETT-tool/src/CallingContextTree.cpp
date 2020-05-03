@@ -5,6 +5,7 @@ void DataLog::fprint(FILE* fp) {
     const uint64_t ONE=1;
     SAFE_WRITE(&ncall, sizeof(uint64_t), ONE, fp);
     SAFE_WRITE(&cycle, sizeof(uint64_t), ONE, fp);
+    SAFE_WRITE(&pkg_energy, sizeof(double), ONE, fp);
     SAFE_WRITE(&active_thread, sizeof(uint64_t), ONE, fp);
     SAFE_WRITE(&size, sizeof(uint64_t), ONE, fp);
     if(size!=0)
@@ -29,6 +30,7 @@ void DataLog::read(FILE* fp) {
     const uint64_t ONE=1;
     SAFE_READ(&ncall, sizeof(uint64_t), ONE, fp);
     SAFE_READ(&cycle, sizeof(uint64_t), ONE, fp);
+    SAFE_READ(&pkg_energy, sizeof(double), ONE, fp);
     SAFE_READ(&active_thread, sizeof(uint64_t), ONE, fp);
     SAFE_READ(&size, sizeof(uint64_t), ONE, fp);
     if(size!=0) {

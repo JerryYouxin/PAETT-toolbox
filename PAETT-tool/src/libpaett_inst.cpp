@@ -106,10 +106,7 @@ extern "C" void PAETT_inst_finalize();
 #define LIBPAETT_INST_LOGFN "libpaett_inst.log"
 static FILE* LOG;
 
-//#define DISABLE_PAPI_SAMPLING
-#ifdef DISABLE_PAPI_SAMPLING
 #include "energy_utils.h"
-#endif
 
 #define COUNT_FN ".paett_collect.cnt"
 #define METRIC_FN "metric.out"
@@ -131,8 +128,11 @@ static std::vector<std::string> ename;
 int es, ee;
 
 static bool detection_mode = false;
+static bool collect_energy = false;
+static double init_energy;
 
 static const char* _pre_ename[MAXEVENT] = {
+    "ENERGY",
     "PAPI_BR_NTK",
     "PAPI_LD_INS",
     "PAPI_L2_ICR",
@@ -141,7 +141,7 @@ static const char* _pre_ename[MAXEVENT] = {
     "PAPI_SR_INS", // PEBS
     "PAPI_L2_DCR" // PEBS
 };
-static int _pre_esize = 7;
+static int _pre_esize = 8;
 
 static long long counterVal[MAXEVENT] = {0};
 static uint64_t g_cycles[MAX_THREAD] = {0};
@@ -222,12 +222,22 @@ void PAETT_inst_init() {
         printf("INFO: profile.event not found for profiling! Use predefined event set.\n");
         int i;
         for(i=0;i<_pre_esize;++i) {
-            ename.push_back(std::string(_pre_ename[i]));
+            std::string en_str = std::string(_pre_ename[i]);
+            if(en_str==std::string("ENERGY")) {
+                collect_energy = true;
+            } else {
+                ename.push_back(en_str);
+            }
         }
     } else {
         char en[50];
         while(EOF!=fscanf(efile, "%s", en)) {
-            ename.push_back(std::string(en));
+            std::string en_str = std::string(en);
+            if(en_str==std::string("ENERGY")) {
+                collect_energy = true;
+            } else {
+                ename.push_back(en_str);
+            }
         }
         fclose(efile);
     }
@@ -251,19 +261,6 @@ void PAETT_inst_init() {
     int numCounter = PAPI_num_counters();
     es=0, ee=eventNum;
     if(eventNum>numCounter) {
-        // int nn;
-        // FILE* fp = fopen(COUNT_FN, "r");
-        // if(fp==NULL || fscanf(fp, "%d", &nn)==EOF) {
-        //     nn = 0;
-        // } else fclose(fp);
-        // es = nn*numCounter;
-        // ee = std::min(nn*numCounter+numCounter, eventNum);
-        // assert(es<eventNum);
-        // fp = fopen(COUNT_FN, "w");
-        // fprintf(fp, "%d", nn+1);
-        // fclose(fp);
-        // printf("Adding Event from %d to %d as event num too large (>%d). You may need multiple run to collect all data\n", es, ee, numCounter);
-        // eventNum = ee - es;
         printf("Error: Too much event is configured (%d events but the platform only support maximum %d events at a time)\n", eventNum, numCounter);
         exit(1);
     }
@@ -297,6 +294,13 @@ void PAETT_inst_init() {
         printf("%s\n", ename[i].c_str()); fflush(stdout);
         CHECK_PAPI_ISOK(PAPI_add_event(EventSet, eventList[i]));
     }
+    /* Init for energy collection if enabled */
+    if(collect_energy) {
+        if(energy_init()!=0) {
+            printf("Energy Collection Initialization Failed!\n");
+            exit(1);
+        }
+    }
     danger[0]=false;
     /* Start counting */
     elapsed_us = PAPI_get_real_usec();
@@ -305,6 +309,8 @@ void PAETT_inst_init() {
     CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[0]->data.eventData[eventNum])));
     ++(cur[0]->data.ncall);
     initialized = 1;
+    init_energy = get_pkg_energy();
+    cur[0]->data.last_energy = init_energy;
     g_cycles[0] = PAPI_get_real_usec();
 }
 #ifdef MULTI_THREAD
@@ -344,6 +350,17 @@ void PAETT_inst_enter(uint64_t key) {
     assert(tid<MAX_THREAD);
     danger[tid] = true;
     assert(cur[tid]);
+    // energy
+    if(collect_energy) {
+        double energy = get_pkg_energy();
+        double e = energy - cur[tid]->data.last_energy;
+        CallingContextLog* p = cur[tid];
+        while(p!=NULL) {
+            p->data.pkg_energy+= e;
+            RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
+            p = p->parent;
+        }
+    }
     cur[tid]->data.cycle += e_cycles - g_cycles[tid];
     //cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode);
     cur[tid] = cur[tid]->getOrInsertChild(key);
@@ -363,6 +380,9 @@ void PAETT_inst_enter(uint64_t key) {
         // printf("Collect for PAPI %0xlx\n",key);
         CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[tid]->data.eventData[eventNum])));
     }
+    if(collect_energy) {
+        cur[tid]->data.last_energy = get_pkg_energy();
+    }
     g_cycles[tid] = PAPI_get_real_usec();
 }
 
@@ -375,6 +395,17 @@ void PAETT_inst_exit(uint64_t key) {
     assert(tid>=0);
     assert(tid<MAX_THREAD);
     danger[tid] = true;
+    // energy
+    if(collect_energy) {
+        double energy = get_pkg_energy();
+        double e = energy - cur[tid]->data.last_energy;
+        CallingContextLog* p = cur[tid];
+        while(p!=NULL) {
+            p->data.pkg_energy+= e;
+            RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
+            p = p->parent;
+        }
+    }
     if(!detection_mode && (!cur[tid]->pruned)) {
         CHECK_PAPI_ISOK(PAPI_read(EventSet, counterVal));
     }
@@ -419,6 +450,9 @@ void PAETT_inst_exit(uint64_t key) {
     }
     
     danger[tid] = false;
+    if(collect_energy) {
+        cur[tid]->data.last_energy = get_pkg_energy();
+    }
     g_cycles[tid] = PAPI_get_real_usec();
 }
 
@@ -443,23 +477,6 @@ void PAETT_inst_finalize() {
     fclose(LOG);
     int tid;
     elapsed_us_multi[0] = elapsed_us;
-    {
-    //     FILE* fp = fopen(METRIC_FN, "r");
-    //     if(fp!=NULL) {
-    //         std::string buff = updateMetrics(fp, root[0]);
-    //         fclose(fp);
-    //         fp = fopen(METRIC_FN, "r");
-    //         updateCCTMetrics(fp, root[0]);
-    //         fclose(fp);
-    //         fp = fopen(METRIC_FN, "w");
-    //         fprintf(fp, "%s", buff.c_str());
-    //         fclose(fp);
-    //     } else {
-            FILE* fp = fopen(METRIC_FN, "w");
-            printMetrics(fp, root[0]);
-            fclose(fp);
-    //     }
-    }
     std::string gprof_fn = profile_path+std::string(PAETT_GENERAL_PROF_FN);
 #ifdef MULTI_THREAD
     FILE* fp = fopen(gprof_fn.c_str(), "w");
@@ -492,14 +509,15 @@ void PAETT_inst_finalize() {
     printDistribution(root[tid], elapsed_us_multi[tid]);
 #endif
     std::string prof_fn = profile_path+std::string(PAETT_PERF_INSTPROF_FN)+"."+std::to_string(tid);
-    CallingContextLog::fprint(prof_fn.c_str(), root[0]);
-    FILE* fkey = fopen(KEYMAP_FN, "w");
+    CallingContextLog::fprint(prof_fn.c_str(), root[tid]);
+    prof_fn = profile_path+std::string(KEYMAP_FN)+"."+std::to_string(tid);
+    FILE* fkey = fopen(prof_fn.c_str(), "w");
     if(fkey!=NULL) {
-        printf("Wring to %s\n",KEYMAP_FN);
-        CallingContextLog::fprintKeyString(fkey, root[0]);
+        printf("Wring keymap to %s\n",prof_fn.c_str());
+        CallingContextLog::fprintKeyString(fkey, root[tid]);
         fclose(fkey);
     } else {
-        printf("Could not open %s to log keymap info!\n",KEYMAP_FN);
+        printf("Could not open %s to log keymap info!\n",prof_fn.c_str());
     }
 #ifdef MULTI_THREAD
     }

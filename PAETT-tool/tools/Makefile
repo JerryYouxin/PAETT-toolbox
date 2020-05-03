@@ -1,4 +1,4 @@
-all: freqcomm_gen paett_read_profile
+all: freqcomm_gen paett_read_profile filter_significant_profile
 
 CXX=g++
 CC=gcc
@@ -18,4 +18,7 @@ freqcomm_gen:freqcomm_gen.cpp.o
 	$(CXX) $(LDFLAGS) -lx86_adapt -lpaett_freqmod $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
 
 paett_read_profile:paett_read_profile.cpp.o
+	$(CXX) $(LDFLAGS) $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
+
+filter_significant_profile:filter_significant_profile.cpp.o
 	$(CXX) $(LDFLAGS) $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
