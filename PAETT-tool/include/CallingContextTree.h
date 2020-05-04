@@ -210,8 +210,10 @@ struct CallingContextTree {
     static void readKeyString(FILE* fp, std::unordered_map<uint64_t, std::string>& keyMap) {
         uint64_t keyVal;
         char buff[200];
-        while(EOF!=fscanf(fp, "%ld %s",&keyVal, buff))
+        while(EOF!=fscanf(fp, "%ld ",&keyVal)) {
+            fscanf(fp, "%[^\n]\n", buff);
             keyMap[keyVal] = std::string(buff);
+        }
     }
 };
 

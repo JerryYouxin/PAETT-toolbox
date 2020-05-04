@@ -99,18 +99,19 @@ namespace {
                 for(auto lkey : ll) {
                     if(lkey->isInvalid()) continue;
                     printf("Matching for [%s]...",utils.loop2string(lkey).c_str());
-                    uint64_t key = utils.lookupKey(utils.loop2string(lkey)); // get key value associated to this loop's debug info
-                    if(key==CCT_INVALID_KEY) {
-                        printf("Not found. Next\n");
-                        continue;
-                    }
+                    // uint64_t key = utils.lookupKey(utils.loop2string(lkey)); // get key value associated to this loop's debug info
+                    // if(key==CCT_INVALID_KEY) {
+                    //     printf("Not found. Next\n");
+                    //     continue;
+                    // }
                     printf("Matched. getFreqCommand...");
-                    FreqCommand_t command = adapter.getFreqCommand(key);
+                    // FreqCommand_t command = adapter.getFreqCommand(key);
+                    FreqCommand_t command = adapter.getFreqCommand(utils.loop2string(lkey));
                     if(isInvalidFreqCommand(command)) {
                         printf("Invalid FreqCommand returned. Skip\n");
                         continue; // quick pass when the command is invalid
                     }
-                    printf("getFreqCommand:[%ld, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key,
+                    printf("getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key,
                         command.pre.core,command.pre.uncore,command.pre.thread,
                         command.post.core,command.post.uncore,command.post.thread);
                     insertFreqModInstruction(C, utils.getLoopInsertPrePoint(lkey), command.pre);
@@ -139,27 +140,28 @@ namespace {
                                 }
                             }
                         }
-                        uint64_t key = utils.lookupKey(utils.ins2string(&(*BI)));
-                        if(auto *op=dyn_cast<CallInst>(&(*BI))) {
-                            Function* f = op->getCalledFunction();
-                            if(!(!f || f->isIntrinsic())) {
-                                std::string name = op->getCalledFunction()->getName().str();
-                                if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
-                                    printf("key=%lx:\n",key);
-                                }
-                            }
-                        }
-                        if(key==CCT_INVALID_KEY) continue;
-                        FreqCommand_t command = adapter.getFreqCommand(key);
+                        // uint64_t key = utils.lookupKey(utils.ins2string(&(*BI)));
+                        // if(auto *op=dyn_cast<CallInst>(&(*BI))) {
+                        //     Function* f = op->getCalledFunction();
+                        //     if(!(!f || f->isIntrinsic())) {
+                        //         std::string name = op->getCalledFunction()->getName().str();
+                        //         if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
+                        //             printf("key=%lx:\n",key);
+                        //         }
+                        //     }
+                        // }
+                        // if(key==CCT_INVALID_KEY) continue;
+                        // FreqCommand_t command = adapter.getFreqCommand(key);
+                        FreqCommand_t command = adapter.getFreqCommand(utils.ins2string(&(*BI)));
                         if(isInvalidFreqCommand(command)) continue; // quick pass when the command is invalid
                         printf("Matched [%s]: ",utils.ins2string(&(*BI)).c_str());
-                        printf("getFreqCommand:[%ld, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key,
+                        printf("getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key.c_str(),
                             command.pre.core,command.pre.uncore,command.pre.thread,
                             command.post.core,command.post.uncore,command.post.uncore);
                         if(auto *op=dyn_cast<CallInst>(&(*BI))) {
                             Function* f = op->getCalledFunction();
                             if(!f || f->isIntrinsic()) {
-                                printf("Warning: Function (%lx:%s) matched command %d %d %d is declaration or intrinsic! Ignore this match.\n",command.key, utils.ins2string(&(*BI)).c_str(), command.pre.core, command.pre.uncore, command.pre.thread);
+                                printf("Warning: Function (%s) matched command %d %d %d is declaration or intrinsic! Ignore this match.\n",command.key.c_str(), command.pre.core, command.pre.uncore, command.pre.thread);
                                 continue;
                             }
                             assert(!(!f || f->isIntrinsic()));

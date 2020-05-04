@@ -4,6 +4,7 @@
 // for file control
 #include <sys/file.h>
 #include <unistd.h>
+#include <string>
 
 namespace {
     // frequency modifications are listed as commands
@@ -11,12 +12,12 @@ namespace {
         uint64_t core, uncore, thread;
     } freqPair;
     typedef struct {
-        uint64_t key; // key value of this command, indicates the location (Loop, Function) of this modification command
+        std::string key; // key value of this command, indicates the location (Loop, Function) of this modification command
         freqPair pre;  // frequency adjust before enter
         freqPair post; // frequency adjust after exit
     } FreqCommand_t;
     bool isInvalidFreqCommand(FreqCommand_t& c) { return c.pre.core==0 && c.pre.uncore==0 && c.pre.thread==0 && c.post.core==0 && c.post.uncore==0 && c.post.thread==0; }
-    typedef std::unordered_map<uint64_t, FreqCommand_t> FreqCommandMap_t; 
+    typedef std::unordered_map<std::string, FreqCommand_t> FreqCommandMap_t; 
     // This template is quite duplicated but I did not find better solution. 
     class ModelAdapter {
         public:
@@ -35,7 +36,7 @@ namespace {
             } // else isCached
             safe_close(cache);
         }
-        FreqCommand_t getFreqCommand(uint64_t key) {
+        FreqCommand_t getFreqCommand(std::string key) {
             assert(initialized);
             FreqCommandMap_t::iterator it = freqCommandMap.find(key);
             if(it!=freqCommandMap.end()) {
@@ -102,18 +103,22 @@ namespace {
             FreqCommand_t command;
             uint64_t key;
             int r0;
+            char buff[200];
             while(EOF!=(r0=fscanf(cache, "%lx", &key))) {
-                fscanf(cache, "%lx",&command.key);
+                fscanf(cache, "%s", buff);
+                command.key = std::string(buff);
+                // fscanf(cache, "%lx",&command.key);
                 fscanf(cache, "%ld",&command.pre.core);
                 fscanf(cache, "%ld",&command.pre.uncore);
                 fscanf(cache, "%ld",&command.pre.thread);
                 fscanf(cache, "%ld",&command.post.core);
                 fscanf(cache, "%ld",&command.post.uncore);
                 fscanf(cache, "%ld",&command.post.thread);
-                fprintf(stdout,"%lx %lx %ld %ld %ld %ld %ld %ld\n",key, command.key,
+                // fprintf(stdout,"%lx %lx %ld %ld %ld %ld %ld %ld\n",key, command.key,
+                fprintf(stdout,"%lx %s %ld %ld %ld %ld %ld %ld\n",key, command.key.c_str(),
                     command.pre.core,command.pre.uncore, command.pre.thread,
                     command.post.core, command.post.uncore, command.post.thread);
-                freqCommandMap[key] = command;
+                freqCommandMap[command.key] = command;
             }
             printf("Read finish\n");
         }

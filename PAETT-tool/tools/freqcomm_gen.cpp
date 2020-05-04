@@ -6,7 +6,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 #include <algorithm>
-
+#include <string>
 
 #define GET_RESPTR_CONT(res,NAME) res->r##NAME
 #define DEFINE_RES_CONT(TYPE,NAME) TYPE r##NAME
@@ -60,6 +60,19 @@ namespace CMDModel {
 #include "CCTRes.h"
 #define FREQMOD_CALL_THRESHOLD 0.001
 
+std::unordered_map<uint64_t, std::string> keyMap;
+void readKeyMap() {
+    uint64_t r;
+    const size_t ONE = 1;
+    const size_t BUFFSIZE = 500;
+    FILE* fp = fopen(KEYMAP_FN".0","r");
+    if(fp==NULL) {
+        printf("Fetal Error: KeyMap File %s could not open!\n", KEYMAP_FN".0");
+        exit(-1);
+    }
+    CallingContextLog::readKeyString(fp, keyMap);
+    fclose(fp);
+}
 
 static bool compareByTime(CCTRes* a, CCTRes* b) {
             return a->data.time > b->data.time;
@@ -131,7 +144,7 @@ namespace {
         uint64_t Cyc_tot;
         ModelAdapterBaseImpl<Res_t>* caller;
     };
-    // This template is quite duplicated but I did not find better solution. 
+    // TODO: This template is quite duplicated but I did not find better solution. 
     template<class Res_t>
     class ModelAdapterBase : public ModelAdapterBaseImpl<Res_t> {
         public:
@@ -155,14 +168,9 @@ namespace {
             }
             assert(us_multi.size()>0);
             fclose(fp);
-            // time_overhead = 0.00150;
-            // time_overhead_core_only = 0.00075;
-            // time_overhead_uncore_only = 0.00075;
-            time_overhead = 150.0;
-            time_overhead_core_only = 75.0;
-            time_overhead_uncore_only = 75.0;
             printf("\nINFO: READ profile: %lu us (%lf s)\n",us_multi[0],(double)us_multi[0] / 1e6);
             printf("INFO: profiled thread count: %u threads\n",us_multi.size());
+            readKeyMap(); // read key map from profile
             openLog();
             for(int i=0, n=us_multi.size();i<n;++i) {
                 // reconstruct root CCTLog from profile
@@ -276,8 +284,9 @@ namespace {
             assert(initialized);
             fprintf(fp,"\n====== %lu commands constructed ======\n",freqCommandMap.size());
             for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) {
-                fprintf(fp,"%lx:[key=%lx]:pre=(%ld, %ld),post=(%ld, %ld)\n",B->first,
-                    B->second.key,B->second.pre.core,B->second.pre.uncore, 
+                fprintf(fp,"%lx:[key=%lx(%s)]:pre=(%ld, %ld),post=(%ld, %ld)\n",B->first,
+                    B->second.key, keyMap[B->second.key].c_str(),
+                    B->second.pre.core,B->second.pre.uncore, 
                     B->second.post.core, B->second.post.uncore);
             }
         }
@@ -329,37 +338,33 @@ namespace {
                 exit(-1);
             }
         }
-        void readFreqCommandMapFromCache() {
-            FreqCommand_t command;
-            uint64_t key;
-            int r0;
-            while(EOF!=(r0=fscanf(cache, "%lx", &key))) {
-                fscanf(cache, "%lx",&command.key);
-                fscanf(cache, "%ld",&command.pre.core);
-                fscanf(cache, "%ld",&command.pre.uncore);
-                fscanf(cache, "%ld",&command.pre.thread);
-                fscanf(cache, "%ld",&command.post.core);
-                fscanf(cache, "%ld",&command.post.uncore);
-                fscanf(cache, "%ld",&command.post.thread);
-                fprintf(stdout,"%lx %lx %ld %ld %ld %ld %ld %ld\n",key, command.key,
-                    command.pre.core,command.pre.uncore, command.pre.thread,
-                    command.post.core, command.post.uncore, command.post.thread);
-                freqCommandMap[key] = command;
-            }
-            printf("Read finish\n");
-        }
+        // void readFreqCommandMapFromCache() {
+        //     FreqCommand_t command;
+        //     uint64_t key;
+        //     int r0;
+        //     while(EOF!=(r0=fscanf(cache, "%lx", &key))) {
+        //         fscanf(cache, "%lx",&command.key);
+        //         fscanf(cache, "%ld",&command.pre.core);
+        //         fscanf(cache, "%ld",&command.pre.uncore);
+        //         fscanf(cache, "%ld",&command.pre.thread);
+        //         fscanf(cache, "%ld",&command.post.core);
+        //         fscanf(cache, "%ld",&command.post.uncore);
+        //         fscanf(cache, "%ld",&command.post.thread);
+        //         fprintf(stdout,"%lx %lx %ld %ld %ld %ld %ld %ld\n",key, command.key,
+        //             command.pre.core,command.pre.uncore, command.pre.thread,
+        //             command.post.core, command.post.uncore, command.post.thread);
+        //         freqCommandMap[key] = command;
+        //     }
+        //     printf("Read finish\n");
+        // }
         void writeFreqCommandMapToCache() {
             fprintf(cache,"%d ",1); // placeholder to inform the cache file is valid
             for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) {
-                fprintf(cache,"%lx %lx %ld %ld %ld %ld %ld %ld\n",B->first, B->second.key,
+                fprintf(cache,"%lx %s %ld %ld %ld %ld %ld %ld\n",B->first, keyMap[B->second.key].c_str(),
                     B->second.pre.core,B->second.pre.uncore, B->second.pre.thread,
-                    //0L,0L,0L);
                     B->second.post.core, B->second.post.uncore, B->second.post.thread);
             }
         }
-        double time_overhead; // overhead measurement
-        double time_overhead_core_only; // overhead measurement
-        double time_overhead_uncore_only; // overhead measurement
         FreqCommandMap_t freqCommandMap;
         virtual void optimizeCCT(CCTRes* root) {
             // invalidate redundant frequency nodes first
@@ -437,11 +442,11 @@ namespace {
             #define OVERHEAD_THRESHOLD 0.05
             double uncore = DECODE_MAX_FREQ_FROM_UNCORE_VALUE(cur->data.uncore);
             double core = DECODE_FREQ_FROM_CORE_VALUE(cur->data.core);
-            if(core!=0 && uncore!=0 && time_overhead/time >= OVERHEAD_THRESHOLD) {
+            if(core!=0 && uncore!=0 && OVERHEAD/time >= OVERHEAD_THRESHOLD) {
                 cur->data.valid = false;
-            } else if (core==0 && uncore!=0 && time_overhead_uncore_only/time >= OVERHEAD_THRESHOLD) {
+            } else if (core==0 && uncore!=0 && OVERHEAD/time >= OVERHEAD_THRESHOLD) {
                 cur->data.valid = false;
-            } else if (core!=0 && uncore==0 && time_overhead_core_only/time >= OVERHEAD_THRESHOLD) {
+            } else if (core!=0 && uncore==0 && OVERHEAD/time >= OVERHEAD_THRESHOLD) {
                 cur->data.valid = false;
             } else if (core==0 && uncore==0) {
                 cur->data.valid = false;
