@@ -152,6 +152,7 @@ namespace {
         FunctionCallee hookDebugPrint;
         PAETT_Utils utils;
         Value* getInstKey(Module &M, LLVMContext &C, std::string debug_info) {
+            if(utils.isInvalidString(debug_info)) return NULL;
             ArrayType* StringTy = ArrayType::get(llvm::Type::getInt8Ty(C), debug_info.size()+1);
             Type* Int8Ty = Type::getInt8Ty(C);
             std::vector<llvm::Constant*> values;
@@ -214,6 +215,7 @@ namespace {
                 // First get context key of this loop
                 if(lkey->isInvalid()) continue; // the loop is no longer invalid, so skip it.
                 key = getInstKey(M, C, utils.loop2string(lkey)); // get key value associated to this loop's debug info
+                if(key==NULL) continue; // invalid key
                 // key = builder.CreateGlobalString(utils.loop2string(lkey));
                 Instruction *enterInst = CallInst::Create(hookEnter,{key});
                 enterInst->insertBefore(utils.getLoopInsertPrePoint(lkey));
@@ -238,7 +240,7 @@ namespace {
                         // ignore openmp function calls
                         if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
                             key = getInstKey(M, C, utils.ins2string(op));
-                            //key = builder.CreateGlobalString(utils.ins2string(op));
+                            if(key==NULL) continue; // invalid key
                             // printf("%ld(%d|%d):%s\n",utils.getInstKeyInt64(mid,utils.ins2string(op)),mid,utils.keySize,utils.ins2string(op).c_str());
                             // fprintf(fp,"%ld\n",utils.lookupKey(utils.ins2string(op)));
                             /****************************************
@@ -256,7 +258,7 @@ namespace {
                         } else {
                             if(name.find("omp")!=std::string::npos || name.find("__kmpc")!=std::string::npos) continue;
                             key = getInstKey(M, C, utils.ins2string(op));
-                            //key = builder.CreateGlobalString(utils.ins2string(op));
+                            if(key==NULL) continue; // invalid key
                             Instruction *enterInst = CallInst::Create(hookEnter,{key});
                             enterInst->insertBefore(op);
                             Instruction *exitInst = CallInst::Create(hookExit,{key});
@@ -266,7 +268,7 @@ namespace {
 #ifndef USE_OLD_LLVM
                     if(auto *op=dyn_cast<CallBrInst>(&(*BI))) {
                         key = getInstKey(M, C, utils.ins2string(op));
-                        //key = builder.CreateGlobalString(utils.ins2string(op));
+                        if(key==NULL) continue; // invalid key
                         Instruction *enterInst = CallInst::Create(hookEnter,{key});
                         enterInst->insertBefore(op);
                         auto dest = op->getDefaultDest();
@@ -281,7 +283,7 @@ namespace {
 #endif
                     if(auto *op=dyn_cast<InvokeInst>(&(*BI))) {
                         key = getInstKey(M, C, utils.ins2string(op));
-                        //key = builder.CreateGlobalString(utils.ins2string(op));
+                        if(key==NULL) continue; // invalid key
                         Instruction *enterInst = CallInst::Create(hookEnter,{key});
                         enterInst->insertBefore(op);
                         auto unwind = op->getUnwindDest();

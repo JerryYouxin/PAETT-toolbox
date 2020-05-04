@@ -77,7 +77,7 @@ namespace {
             PAETT_Utils utils;
             // obtain neccessary analysis data
             std::string m_name = M.getName().str();
-            utils.readKeyMap(m_name);
+            // utils.readKeyMap(m_name);
             // function hooks
 #ifdef USE_OLD_LLVM
             hookInit = Function::Create(FunctionType::get(VoidTy, {}, false), Function::ExternalLinkage, "PAETT_init", &M);

@@ -21,107 +21,107 @@ void __unlock() {
 }
 
 PAETT_Utils::PAETT_Utils() {
-    keySize = 0;
+    // keySize = 0;
 }
 
-// KeyMap write/read util functions. The file based locking method may lead to dead lock due to some reason
-void PAETT_Utils::printKeyMap(std::string m_name) {
-    printf("========== Print %s KeyMap ============\n",m_name.c_str());
-    uint64_t r;
-    const size_t ONE = 1;
-    __lock();
-    int fd = open(KEYMAP_FN,O_RDWR|O_CREAT,S_IRWXU);
-    if(fd==-1) {
-        errs() << "FETAL ERROR: Failed to open file " << KEYMAP_FN << ", err=" << fd << "\n";
-        __unlock();
-        exit(-1);
-    }
-    // flock will block when the lock is not available
-    if(int r=flock(fd, LOCK_EX)) {
-        errs() << "FETAL ERROR: Failed to lock file " << KEYMAP_FN << ", err=" << r << "\n";
-        __unlock();
-        exit(-1);
-    }
-    FILE* fp = fdopen(fd,"ab+");
-    for(std::unordered_map<std::string, uint64_t>::iterator B=logMap.begin(), E=logMap.end();B!=E;++B) {
-        size_t val = B->first.size();
-        SAFE_WRITE(&val, sizeof(size_t), ONE, fp);
-        SAFE_WRITE(B->first.c_str(), sizeof(char), B->first.size(), fp);
-        SAFE_WRITE(&(B->second), sizeof(uint64_t), ONE, fp);
-    }
-#ifndef KEYMAP_NAME_FROM_MODULE
-    // release lock for anyone else
-    if(int r=flock(fd, LOCK_UN)) {
-        errs() << "FETAL ERROR: Failed to unlock file " << KEYMAP_FN << ", err=" << r << "\n";
-        exit(-1);
-    }
-#endif
-    fclose(fp);
-    __unlock();
-    printf("========== Print %s KeyMap finish ===========\n", KEYMAP_FN);
-}
-void PAETT_Utils::printKeyMapStd(std::string m_name) {
-    for(std::unordered_map<std::string, uint64_t>::iterator B=logMap.begin(), E=logMap.end();B!=E;++B) {
-        printf("[%s]: %lx\n",B->first.c_str(),B->second);
-    }
-}
+// // KeyMap write/read util functions. The file based locking method may lead to dead lock due to some reason
+// void PAETT_Utils::printKeyMap(std::string m_name) {
+//     printf("========== Print %s KeyMap ============\n",m_name.c_str());
+//     uint64_t r;
+//     const size_t ONE = 1;
+//     __lock();
+//     int fd = open(KEYMAP_FN,O_RDWR|O_CREAT,S_IRWXU);
+//     if(fd==-1) {
+//         errs() << "FETAL ERROR: Failed to open file " << KEYMAP_FN << ", err=" << fd << "\n";
+//         __unlock();
+//         exit(-1);
+//     }
+//     // flock will block when the lock is not available
+//     if(int r=flock(fd, LOCK_EX)) {
+//         errs() << "FETAL ERROR: Failed to lock file " << KEYMAP_FN << ", err=" << r << "\n";
+//         __unlock();
+//         exit(-1);
+//     }
+//     FILE* fp = fdopen(fd,"ab+");
+//     for(std::unordered_map<std::string, uint64_t>::iterator B=logMap.begin(), E=logMap.end();B!=E;++B) {
+//         size_t val = B->first.size();
+//         SAFE_WRITE(&val, sizeof(size_t), ONE, fp);
+//         SAFE_WRITE(B->first.c_str(), sizeof(char), B->first.size(), fp);
+//         SAFE_WRITE(&(B->second), sizeof(uint64_t), ONE, fp);
+//     }
+// #ifndef KEYMAP_NAME_FROM_MODULE
+//     // release lock for anyone else
+//     if(int r=flock(fd, LOCK_UN)) {
+//         errs() << "FETAL ERROR: Failed to unlock file " << KEYMAP_FN << ", err=" << r << "\n";
+//         exit(-1);
+//     }
+// #endif
+//     fclose(fp);
+//     __unlock();
+//     printf("========== Print %s KeyMap finish ===========\n", KEYMAP_FN);
+// }
+// void PAETT_Utils::printKeyMapStd(std::string m_name) {
+//     for(std::unordered_map<std::string, uint64_t>::iterator B=logMap.begin(), E=logMap.end();B!=E;++B) {
+//         printf("[%s]: %lx\n",B->first.c_str(),B->second);
+//     }
+// }
 
-void PAETT_Utils::readKeyMap(std::string m_name, bool safe_check) {
-    uint64_t r;
-    const size_t ONE = 1;
-    const size_t BUFFSIZE = 500;
-    __lock();
-    FILE* fp = fopen(KEYMAP_FN,"rb");
-    if(fp==NULL && safe_check) {
-        printf("Fetal Error: KeyMap File %s could not open!\n", KEYMAP_FN);
-        __unlock();
-        exit(-1);
-    } else if(fp==NULL) {
-        __unlock();
-        return ;
-    }
-    size_t val; char buff[BUFFSIZE+1];
-    uint64_t data;
-    while(fread(&val, sizeof(size_t), ONE, fp)==ONE) {
-        std::string debug_info = "";
-        while(val>=BUFFSIZE) {
-            SAFE_READ(buff, sizeof(char), BUFFSIZE, fp);
-            val -= BUFFSIZE;
-            buff[BUFFSIZE] = '\0';
-            debug_info += buff;
-        }
-        SAFE_READ(buff, sizeof(char), val, fp);
-        buff[val] = '\0';
-        debug_info += buff;
-        SAFE_READ(&data, sizeof(uint64_t), ONE, fp);
-        logMap[debug_info] = data;
-    }
-    fclose(fp);
-    __unlock();
-    //printKeyMapStd(m_name);
-}
-uint64_t PAETT_Utils::lookupKey(std::string debug_info) {
-    uint64_t key;
-    std::unordered_map<std::string, uint64_t>::iterator it0;
-    if((it0=logMap.find(debug_info))!=logMap.end()) {
-        key = it0->second;
-    } else {
-        key = CCT_INVALID_KEY;
-    }
-    return key;
-}
-uint64_t PAETT_Utils::getInstKeyInt64(uint64_t mid, std::string debug_info) {
-    uint64_t key;
-    std::unordered_map<std::string, uint64_t>::iterator it0;
-    if((it0=logMap.find(debug_info))!=logMap.end()) {
-        key = it0->second;
-    } else {
-        key = MAKE_KEY(mid, keySize);
-        logMap[debug_info]=key;
-        ++keySize;
-    }
-    return key;
-}
+// void PAETT_Utils::readKeyMap(std::string m_name, bool safe_check) {
+//     uint64_t r;
+//     const size_t ONE = 1;
+//     const size_t BUFFSIZE = 500;
+//     __lock();
+//     FILE* fp = fopen(KEYMAP_FN,"rb");
+//     if(fp==NULL && safe_check) {
+//         printf("Fetal Error: KeyMap File %s could not open!\n", KEYMAP_FN);
+//         __unlock();
+//         exit(-1);
+//     } else if(fp==NULL) {
+//         __unlock();
+//         return ;
+//     }
+//     size_t val; char buff[BUFFSIZE+1];
+//     uint64_t data;
+//     while(fread(&val, sizeof(size_t), ONE, fp)==ONE) {
+//         std::string debug_info = "";
+//         while(val>=BUFFSIZE) {
+//             SAFE_READ(buff, sizeof(char), BUFFSIZE, fp);
+//             val -= BUFFSIZE;
+//             buff[BUFFSIZE] = '\0';
+//             debug_info += buff;
+//         }
+//         SAFE_READ(buff, sizeof(char), val, fp);
+//         buff[val] = '\0';
+//         debug_info += buff;
+//         SAFE_READ(&data, sizeof(uint64_t), ONE, fp);
+//         logMap[debug_info] = data;
+//     }
+//     fclose(fp);
+//     __unlock();
+//     //printKeyMapStd(m_name);
+// }
+// uint64_t PAETT_Utils::lookupKey(std::string debug_info) {
+//     uint64_t key;
+//     std::unordered_map<std::string, uint64_t>::iterator it0;
+//     if((it0=logMap.find(debug_info))!=logMap.end()) {
+//         key = it0->second;
+//     } else {
+//         key = CCT_INVALID_KEY;
+//     }
+//     return key;
+// }
+// uint64_t PAETT_Utils::getInstKeyInt64(uint64_t mid, std::string debug_info) {
+//     uint64_t key;
+//     std::unordered_map<std::string, uint64_t>::iterator it0;
+//     if((it0=logMap.find(debug_info))!=logMap.end()) {
+//         key = it0->second;
+//     } else {
+//         key = MAKE_KEY(mid, keySize);
+//         logMap[debug_info]=key;
+//         ++keySize;
+//     }
+//     return key;
+// }
 std::string PAETT_Utils::loop2string(Loop* loop) {
     std::string s;
     const DebugLoc LoopDbgLoc = loop->getStartLoc();
@@ -144,42 +144,49 @@ std::string PAETT_Utils::func2string(Function* F) {
     return std::string("F:") + F->getName().str() + ":" + ss.str();
 }
 
-int PAETT_Utils::getMID(std::string m_name) {
-    int fd = open(INFO_FN,O_RDWR|O_CREAT,S_IRWXU);
-    if(fd==-1) {
-        errs() << "FETAL ERROR: Failed to open file " << INFO_FN << ", err=" << fd << "\n";
-        exit(-1);
+bool PAETT_Utils::isInvalidString(std::string str) {
+    if(str==std::string("F:") || str==std::string("L:") || str==std::string("I:")) {
+        return true;
     }
-    // flock will block when the lock is not available
-    if(int r=flock(fd, LOCK_EX)) {
-        errs() << "FETAL ERROR: Failed to lock file " << INFO_FN << ", err=" << r << "\n";
-        exit(-1);
-    }
-    // count logging lines to determing my ID
-    int cc=0; 
-    char buff[500];
-    std::string sn="";
-    while(int s=read(fd, buff, 500)) {
-        for(int i=0;i<s;++i) {
-            // one module occupies a line of the log
-            if(buff[i]=='\n') {
-                cc++; if(sn==m_name) { goto final; } sn="";
-            } else {
-                sn+=buff[i];
-            }
-        }
-    }
-    // now write my log to the last of the file
-    write(fd, (m_name+"\n").c_str(), (m_name+"\n").size());
-final:
-    // release lock for anyone else
-    if(int r=flock(fd, LOCK_UN)) {
-        errs() << "FETAL ERROR: Failed to unlock file " << INFO_FN << ", err=" << r << "\n";
-        exit(-1);
-    }
-    close(fd);
-    return cc;
+    return false;
 }
+
+// int PAETT_Utils::getMID(std::string m_name) {
+//     int fd = open(INFO_FN,O_RDWR|O_CREAT,S_IRWXU);
+//     if(fd==-1) {
+//         errs() << "FETAL ERROR: Failed to open file " << INFO_FN << ", err=" << fd << "\n";
+//         exit(-1);
+//     }
+//     // flock will block when the lock is not available
+//     if(int r=flock(fd, LOCK_EX)) {
+//         errs() << "FETAL ERROR: Failed to lock file " << INFO_FN << ", err=" << r << "\n";
+//         exit(-1);
+//     }
+//     // count logging lines to determing my ID
+//     int cc=0; 
+//     char buff[500];
+//     std::string sn="";
+//     while(int s=read(fd, buff, 500)) {
+//         for(int i=0;i<s;++i) {
+//             // one module occupies a line of the log
+//             if(buff[i]=='\n') {
+//                 cc++; if(sn==m_name) { goto final; } sn="";
+//             } else {
+//                 sn+=buff[i];
+//             }
+//         }
+//     }
+//     // now write my log to the last of the file
+//     write(fd, (m_name+"\n").c_str(), (m_name+"\n").size());
+// final:
+//     // release lock for anyone else
+//     if(int r=flock(fd, LOCK_UN)) {
+//         errs() << "FETAL ERROR: Failed to unlock file " << INFO_FN << ", err=" << r << "\n";
+//         exit(-1);
+//     }
+//     close(fd);
+//     return cc;
+// }
 
 #define FORCE_ALERT_NO_PREHEADER
 //#define DEBUG
@@ -207,7 +214,7 @@ Instruction* PAETT_Utils::getLoopInsertPrePoint(Loop* lkey) {
         else
             // Just print the module name.
             errs() << lkey->getHeader()->getParent()->getParent()->getModuleIdentifier() << "\n";
-        errs() << ": WARNING: No preheader found: " << header << " " << header->getParent()->getName().str() << ". Insert instrumentation code into loop header key=" << keySize-1 << " " << loop2string(lkey) << "\n";
+        errs() << ": WARNING: No preheader found: " << header << " " << header->getParent()->getName().str() << ". Insert instrumentation code into loop header (" << loop2string(lkey) << ")\n";
         errs() << "WARNING: instrumentation in loop header will cause heavy overhead. Please run opt --loop-simplify first!\n";
 #ifdef FORCE_ALERT_NO_PREHEADER
         assert(0 && "insertInLoop!!!");

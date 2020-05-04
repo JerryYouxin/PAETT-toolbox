@@ -18,7 +18,7 @@
 
 // flang only as it uses llvm 7.0.0
 #define USE_OLD_LLVM
-#define CCT_ROOT_KEY -1
-#define CCT_INVALID_KEY ((uint64_t)-2)
+#define CCT_ROOT_KEY "ROOT"
+#define CCT_INVALID_KEY "INVALID"
 #define CHECK_THRESHOLD 10
 #endif
