@@ -261,26 +261,26 @@ void PAETT_Utils::getLoopInsertPostPoint(Loop* lkey, std::vector<Instruction*>& 
             if(auto *op=dyn_cast<InvokeInst>(&(*BI))) {
                 auto unwind = op->getUnwindDest();
                 inserted=true;
-#ifdef USE_OLD_LLVM
+// #ifdef USE_OLD_LLVM
                 if(std::find(exitBlocks.begin(),exitBlocks.end(),unwind)==exitBlocks.end()) {
                     res.push_back(&(*(unwind->getFirstInsertionPt())));
                     exitBlocks.push_back(unwind);
                 }
-#else
-                Instruction* unw = &(*(unwind->getTerminator()));
-                for(unsigned int i=0, n=unw->getNumSuccessors();i<n;++i) {
-                    auto suc = unw->getSuccessor(i);  
-                    if(std::find(exitBlocks.begin(),exitBlocks.end(),suc)==exitBlocks.end()) {
-                        res.push_back(&(*(suc->getFirstInsertionPt())));
-                        exitBlocks.push_back(suc);
-                    }
-                }
-#endif
-                auto normal = op->getNormalDest();
-                if(std::find(exitBlocks.begin(),exitBlocks.end(),normal)==exitBlocks.end()) {
-                    res.push_back(&(*(normal->getFirstInsertionPt())));
-                    exitBlocks.push_back(normal);
-                }
+// #else
+//                 Instruction* unw = &(*(unwind->getTerminator()));
+//                 for(unsigned int i=0, n=unw->getNumSuccessors();i<n;++i) {
+//                     auto suc = unw->getSuccessor(i);  
+//                     if(std::find(exitBlocks.begin(),exitBlocks.end(),suc)==exitBlocks.end()) {
+//                         res.push_back(&(*(suc->getFirstInsertionPt())));
+//                         exitBlocks.push_back(suc);
+//                     }
+//                 }
+// #endif
+                // auto normal = op->getNormalDest();
+                // if(std::find(exitBlocks.begin(),exitBlocks.end(),normal)==exitBlocks.end()) {
+                //     res.push_back(&(*(normal->getFirstInsertionPt())));
+                //     exitBlocks.push_back(normal);
+                // }
             }
             if(auto *op=dyn_cast<BranchInst>(&(*BI))) {
                 if(insertInLoop) {

@@ -25,14 +25,17 @@ void readKeyMap() {
 
 struct options_struct {
     string prof_fn;
+    string output;
     options_struct() : 
-        prof_fn(PAETT_PERF_INSTPROF_FN".0")
+        prof_fn(PAETT_PERF_INSTPROF_FN".0"),
+        output("paett.filt")
     {}
 } options;
 
 void usage() {
     printf("Usage: paett_read_profile <options>\n");
     printf("\tAvailable Options:\n");
+    printf("\t\t--out <path/to/output>\t:set path to genereted PAETT's filter file for compiling, the default value is %s\n", "paett.filt");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
 }
 
@@ -40,7 +43,15 @@ void parse_args(int argc, char* argv[]) {
     string opt;
     for(int i=1;i<argc;++i) {
         opt = string(argv[i]);
-        if(opt==string("--prof_fn")) {
+        if(opt==string("--out")) {
+            ++i;
+            if(argc==i) {
+                printf("--prof_fn must have a value\n");
+                usage();
+                exit(1);
+            }
+            options.output = string(argv[i]);
+        } else if(opt==string("--prof_fn")) {
             ++i;
             if(argc==i) {
                 printf("--prof_fn must have a value\n");
@@ -59,46 +70,45 @@ unknown:
     exit(1);
 }
 
-void print_significant(CallingContextLog* root) {
-    if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
-        CallingContextLog* p = root;
-        while(p!=NULL) {
-            printf("%s=>",keyMap[p->key].c_str());
-            p = p->parent;
+void print_cct(CallingContextLog* root, bool print_data, string pre="") {
+    if(!root->pruned) {
+        printf("%s+ %s",pre.c_str(), keyMap[root->key].c_str());
+        if(print_data) {
+            printf(":");
+            root->data.print(stdout);
         }
-        printf(";");
-        for(int i=0;i<root->data.size;++i) {
-            printf("%ld ", root->data.eventData[i]);
-        }
-        printf("%lf\n", root->data.pkg_energy);
+        printf("\n");
     }
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
-        print_significant(CB->second);
+        print_cct(CB->second, print_data, pre+"|  ");
     }
 }
 
-void mergeEventData(CallingContextLog* root) {
+void __generate_filter(FILE* fp, CallingContextLog* root) {
+    if(!root->pruned) {
+        fprintf(fp, "%s\n", keyMap[root->key].c_str());
+    }
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
-        mergeEventData(CB->second);
-        for(int i=0;i<root->data.size;++i) {
-            root->data.eventData[i] += CB->second->data.eventData[i];
-        }
+        __generate_filter(fp, CB->second);
     }
 }
 
-void splitEnergyData(CallingContextLog* root) {
-    for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
-        root->data.pkg_energy -= CB->second->data.pkg_energy;
-        splitEnergyData(CB->second);
+void generate_filter(CallingContextLog* root, const char* fn) {
+    FILE* fp = fopen(fn, "w");
+    if(fp==NULL) {
+        printf("Failed to open output file %s\n", fn);
+        exit(1);
     }
+    __generate_filter(fp, root);
+    fclose(fp);
 }
 
 int main(int argc, char* argv[]) {
     parse_args(argc, argv);
     readKeyMap();
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
-    splitEnergyData(root);
     pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
-    print_significant(root);
+    print_cct(root, false);
+    generate_filter(root, options.output.c_str());
     return 0;
 }

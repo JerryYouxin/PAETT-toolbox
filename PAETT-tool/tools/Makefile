@@ -1,4 +1,4 @@
-all: freqcomm_gen paett_read_profile filter_significant_profile
+all: freqcomm_gen paett_read_profile filter_significant_profile filter_gen
 
 CXX=g++
 CC=gcc
@@ -22,3 +22,9 @@ paett_read_profile:paett_read_profile.cpp.o
 
 filter_significant_profile:filter_significant_profile.cpp.o
 	$(CXX) $(LDFLAGS) $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
+
+filter_gen:filter_gen.cpp.o
+	$(CXX) $(LDFLAGS) $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
+
+clean:
+	rm -rf *.o

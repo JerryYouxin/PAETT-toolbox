@@ -1,2 +1,2 @@
 #!/bin/bash
-flang -Xclang -paett-freqmod -lpaett_freqmod -L`dirname $0`/../lib $@
+flang -Xclang -paett-freqmod -lpaett_freqmod -lx86_adapt -L`dirname $0`/../lib $@

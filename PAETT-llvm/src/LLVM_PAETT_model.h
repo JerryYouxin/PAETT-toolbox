@@ -22,35 +22,42 @@ namespace {
     class ModelAdapter {
         public:
         ModelAdapter() { initialized=false; }
-        void init() {
+        void init(std::string fn) {
             if(initialized) return;
             initialized = true;
-            if(isCached()) {
+            if(isCached(fn)) {
                 printf("\nINFO: read frequency commands from cached file\n");
                 enableConcurrentCacheRead();
                 readFreqCommandMapFromCache();
             } else {
-                printf("\nFetal Error: Frequency command file could not open: %s\n", CACHE_FN.c_str());
-                printf("\t You should generate frequency commands from tools in PAETT-tool before compiling for frequency optimization.\n");
-                exit(1);
+                printf("\nWarning: Frequency command file could not open: %s", CACHE_FN.c_str());
+                printf("\n         You should generate frequency commands from tools in PAETT-tool before compiling for frequency optimization.\n");
+                initialized = false;
+                return ;
             } // else isCached
             safe_close(cache);
         }
         FreqCommand_t getFreqCommand(std::string key) {
-            assert(initialized);
-            FreqCommandMap_t::iterator it = freqCommandMap.find(key);
-            if(it!=freqCommandMap.end()) {
-                return it->second;
-            } else {
-                return {key, {0,0}, {0,0}};
+            if(!initialized) return {key, {0,0}, {0,0}};
+            for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) { 
+                if(B->second.key==key) {
+                    printf("%s Matched\n", key.c_str());
+                    return B->second;
+                }
             }
+            return {key, {0,0}, {0,0}};
+            // FreqCommandMap_t::iterator it = freqCommandMap.find(key);
+            // if(it!=freqCommandMap.end()) {
+            //     return it->second;
+            // } else {
+            //     return {key, {0,0}, {0,0}};
+            // }
         }
         void printAllFreqCommand(FILE* fp=stdout) {
-            assert(initialized);
             fprintf(fp,"\n====== %lu commands constructed ======\n",freqCommandMap.size());
             for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) {
-                fprintf(fp,"%lx:[key=%lx]:pre=(%ld, %ld),post=(%ld, %ld)\n",B->first,
-                    B->second.key,B->second.pre.core,B->second.pre.uncore, 
+                fprintf(fp,"%s:[key=%s]:pre=(%ld, %ld),post=(%ld, %ld)\n",B->first.c_str(),
+                    B->second.key.c_str(),B->second.pre.core,B->second.pre.uncore, 
                     B->second.post.core, B->second.post.uncore);
             }
         }
@@ -86,9 +93,10 @@ namespace {
             safe_close(LOG);
         }
         FILE* cache;
-        const std::string CACHE_FN="paett_model.cache";
-        bool isCached() {
-            cache = safe_open(CACHE_FN.c_str(), "r+");
+        std::string CACHE_FN; //="paett_model.cache";
+        bool isCached(std::string fn) {
+            CACHE_FN = fn;
+            cache = safe_open(CACHE_FN.c_str(), "r");
             int v; // placeholder to check if the cache file is valid or not
             return (fscanf(cache,"%d",&v)!=EOF);
         }
@@ -104,8 +112,9 @@ namespace {
             uint64_t key;
             int r0;
             char buff[200];
-            while(EOF!=(r0=fscanf(cache, "%lx", &key))) {
-                fscanf(cache, "%s", buff);
+            while(EOF!=(r0=fscanf(cache, "%lx ", &key))) {
+                // fscanf(cache, "%s", buff);
+                fscanf(cache, "%[^;];", buff);
                 command.key = std::string(buff);
                 // fscanf(cache, "%lx",&command.key);
                 fscanf(cache, "%ld",&command.pre.core);
@@ -121,19 +130,20 @@ namespace {
                 freqCommandMap[command.key] = command;
             }
             printf("Read finish\n");
+            printAllFreqCommand();
         }
-        void writeFreqCommandMapToCache() {
-            fprintf(cache,"%d ",1); // placeholder to inform the cache file is valid
-            for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) {
-                // fprintf(cache,"%lx:[key=%lx]:pre=(%ld, %ld),post=(%ld, %ld),thread=%ld\n",B->first,
-                //     B->second.key,B->second.pre.core,B->second.pre.uncore, 
-                //     B->second.post.core, B->second.post.uncore,
-                //     B->second.thread);
-                fprintf(cache,"%lx %lx %ld %ld %ld %ld %ld %ld\n",B->first, B->second.key,
-                    B->second.pre.core,B->second.pre.uncore, B->second.pre.thread,
-                    B->second.post.core, B->second.post.uncore, B->second.post.thread);
-            }
-        }
+        // void writeFreqCommandMapToCache() {
+        //     fprintf(cache,"%d ",1); // placeholder to inform the cache file is valid
+        //     for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) {
+        //         // fprintf(cache,"%lx:[key=%lx]:pre=(%ld, %ld),post=(%ld, %ld),thread=%ld\n",B->first,
+        //         //     B->second.key,B->second.pre.core,B->second.pre.uncore, 
+        //         //     B->second.post.core, B->second.post.uncore,
+        //         //     B->second.thread);
+        //         fprintf(cache,"%lx %lx %ld %ld %ld %ld %ld %ld\n",B->first, B->second.key,
+        //             B->second.pre.core,B->second.pre.uncore, B->second.pre.thread,
+        //             B->second.post.core, B->second.post.uncore, B->second.post.thread);
+        //     }
+        // }
         FreqCommandMap_t freqCommandMap;
     };
 }

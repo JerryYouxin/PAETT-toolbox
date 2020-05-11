@@ -94,15 +94,27 @@ void print_significant(CallingContextLog* root) {
     }
 }
 
+void mergeEventData(CallingContextLog* root) {
+    for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
+        mergeEventData(CB->second);
+        for(int i=0;i<root->data.size;++i) {
+            root->data.eventData[i] += CB->second->data.eventData[i];
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     parse_args(argc, argv);
     readKeyMap();
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
+    mergeEventData(root);
     printf("Calling Context Tree:\n\n");
     print_cct(root, options.print_data);
     if(options.print_significant) {
         printf("Pruning Threshold = %ld us\n", PRUNE_THRESHOLD);
-        pruneCCTWithThreshold(root, PRUNE_THRESHOLD);
+        pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
+        printf("Pruned CCT:\n");
+        print_cct(root, false);
         printf("\nSignificant Regions:\n");
         print_significant(root);
     }

@@ -9,6 +9,8 @@
 
 #include <iostream>
 
+#define PREALLOCATE_CCT
+
 #include "common.h"
 // actually, this indicates main function (entry function of a program)
 #define CCT_ROOT_KEY -1
@@ -44,7 +46,7 @@ struct CallingContextTree {
     }
 #endif
     void printStack() {
-        printf("  [0x%lx]:",key);
+        printf("  [0x%lx:%s]:",key,(key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
         data.print();
         printf("\n");
         if(parent!=NULL) {
@@ -145,6 +147,15 @@ struct CallingContextTree {
         }
         return cur;
     }
+    CallingContextTree<Data_t>* copyCCT(CallingContextTree<Data_t>* src) {
+        // copy CCT Path Only. Data will not be copied
+        CallingContextTree<Data_t>* cur = this;
+        for(auto CB=src->children.begin(), CE=src->children.end();CB!=CE;++CB) {
+            auto c = cur->getOrInsertChild(CB->second->key);
+            c->copyCCT(CB->second);
+        }
+        return cur;
+    }
     static void fprint(const char* fn, CallingContextTree<Data_t>* root) {
         FILE* fp = fopen(fn, "wb");
         fprint(fp, root);
@@ -209,10 +220,17 @@ struct CallingContextTree {
     }
     static void readKeyString(FILE* fp, std::unordered_map<uint64_t, std::string>& keyMap) {
         uint64_t keyVal;
-        char buff[200];
+        char buff[101];
         while(EOF!=fscanf(fp, "%ld ",&keyVal)) {
-            fscanf(fp, "%[^\n]\n", buff);
-            keyMap[keyVal] = std::string(buff);
+            fscanf(fp, "%100[^\n]", buff);
+            std::string key(buff);
+            fscanf(fp, "%c", &buff[0]);
+            while(buff[0]!='\n') {
+                fscanf(fp, "%99[^\n]", &buff[1]);
+                key += std::string(buff);
+                fscanf(fp, "%c", &buff[0]);
+            }
+            keyMap[keyVal] = key;
         }
     }
 };
@@ -457,4 +475,4 @@ static void printMergedEnergy(FILE* fp, CallingContextLog* root) {
     }
 }
 
-bool pruneCCTWithThreshold(CallingContextLog* cur, double threshold);
+bool pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_pruned=false);

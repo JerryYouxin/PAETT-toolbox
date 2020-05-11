@@ -51,56 +51,74 @@ void DataLog::clear() {
 
 static std::unordered_map<uint64_t, uint64_t> prunedRegion;
 
-bool __pruneAllPrunedRegions(CallingContextLog* cur) {
+void __mergePrunedNode(CallingContextLog* cur) {
+    for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
+        // make sure the children has already merged for pruned node
+        __mergePrunedNode(CB->second);
+        // if this child is pruned, merge data to his parent (cur)
+        if(CB->second->pruned) {
+            cur->data.cycle += CB->second->data.cycle;
+            for(int i=0;i<cur->data.size;++i) {
+                cur->data.eventData[i] += CB->second->data.eventData[i];
+            }
+        }
+    }
+}
+
+bool __pruneAllPrunedRegions(CallingContextLog* cur, bool erase_pruned) {
     bool prune = true;
     std::vector<CallingContextLog::ChildList::iterator> prunedChildren;
     for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
-        bool childPrune = __pruneAllPrunedRegions(CB->second);
-        if(childPrune) {
+        bool childPrune = __pruneAllPrunedRegions(CB->second, erase_pruned);
+        if(erase_pruned && childPrune) {
             prunedChildren.push_back(CB);
         }
         prune &= childPrune;
     }
-    // actual prune work of the pruned subtree
-    for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
-        CallingContextLog::ChildList::iterator key = *CB;
-        cur->data.cycle += key->second->data.cycle;
-        for(int i=0;i<cur->data.size;++i) {
-            cur->data.eventData[i] += key->second->data.eventData[i];
+    if(erase_pruned) {
+        // actual prune work of the pruned subtree
+        for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
+            CallingContextLog::ChildList::iterator key = *CB;
+            cur->data.cycle += key->second->data.cycle;
+            for(int i=0;i<cur->data.size;++i) {
+                cur->data.eventData[i] += key->second->data.eventData[i];
+            }
+            cur->children.erase(key);
         }
-        cur->children.erase(key);
     }
     cur->pruned = cur->pruned || (prunedRegion.find(cur->key)!=prunedRegion.end());
     return prune && cur->pruned;
 }
 
-bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold) {
+bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_pruned) {
     bool prune = true;
     std::vector<CallingContextLog::ChildList::iterator> prunedChildren;
     // try to prune its children first to get more accurate time estimation for this node
     for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
-        bool childPrune = __pruneCCTWithThreshold(CB->second, threshold);
-        if(childPrune) {
+        bool childPrune = __pruneCCTWithThreshold(CB->second, threshold, erase_pruned);
+        if(erase_pruned && childPrune) {
             prunedChildren.push_back(CB);
         }
         prune &= childPrune;
     }
     // actual prune work of the pruned subtree
-    for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
-        CallingContextLog::ChildList::iterator key = *CB;
-        cur->data.cycle += key->second->data.cycle;
-        for(int i=0;i<cur->data.size;++i) {
-            cur->data.eventData[i] += key->second->data.eventData[i];
+    if(erase_pruned) {
+        for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
+            CallingContextLog::ChildList::iterator key = *CB;
+            cur->data.cycle += key->second->data.cycle;
+            for(int i=0;i<cur->data.size;++i) {
+                cur->data.eventData[i] += key->second->data.eventData[i];
+            }
+            cur->children.erase(key);
         }
-        cur->children.erase(key);
     }
     // if all chldren are pruned, this node may be pruned, so check it
     if(prune) {
         // get actual time assumed to be executed exactly in this function (exclude his *valid* children's)
         double time = cur->data.cycle;
-        for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
-            time += CB->second->data.cycle;
-        }
+        // for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
+        //     time += CB->second->data.cycle;
+        // }
         // now update the time
         time /= cur->data.ncall; // per call time
         // simple and aggresive pruning methodology
@@ -113,8 +131,11 @@ bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold) {
     return prune;
 }
 
-bool pruneCCTWithThreshold(CallingContextLog* cur, double threshold) {
-    bool pruned = __pruneCCTWithThreshold(cur, threshold);
-    pruned = pruned && __pruneAllPrunedRegions(cur);
+bool pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_pruned) {
+    bool pruned = __pruneCCTWithThreshold(cur, threshold, erase_pruned);
+    pruned = pruned && __pruneAllPrunedRegions(cur, erase_pruned);
+    if(!erase_pruned) {
+        __mergePrunedNode(cur);
+    }
     return pruned;
 }

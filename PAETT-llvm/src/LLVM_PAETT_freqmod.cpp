@@ -58,11 +58,11 @@ namespace {
         FunctionCallee hookAffinityRecover;
         FunctionCallee hookThread;
         ModelAdapter adapter;
-        FreqModPass() : ModulePass(ID) {
+        FreqModPass(std::string fn="paett_model.cache") : ModulePass(ID) {
             initializeFreqModPassPass(*PassRegistry::getPassRegistry());
             // get frequency modification commands from model adapter.
             // TODO: the command list can be optimized by merging same commands of nested loop together.
-            adapter.init();
+            adapter.init(fn);
         }
         ~FreqModPass() {};
         void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -98,22 +98,22 @@ namespace {
                 auto ll = LI.getLoopsInPreorder();
                 for(auto lkey : ll) {
                     if(lkey->isInvalid()) continue;
-                    printf("Matching for [%s]...",utils.loop2string(lkey).c_str());
+                    // printf("Matching for [%s]...",utils.loop2string(lkey).c_str());
                     // uint64_t key = utils.lookupKey(utils.loop2string(lkey)); // get key value associated to this loop's debug info
                     // if(key==CCT_INVALID_KEY) {
                     //     printf("Not found. Next\n");
                     //     continue;
                     // }
-                    printf("Matched. getFreqCommand...");
+                    // printf("Matched. getFreqCommand...");
                     // FreqCommand_t command = adapter.getFreqCommand(key);
                     FreqCommand_t command = adapter.getFreqCommand(utils.loop2string(lkey));
                     if(isInvalidFreqCommand(command)) {
-                        printf("Invalid FreqCommand returned. Skip\n");
+                        // printf("Invalid FreqCommand returned. Skip\n");
                         continue; // quick pass when the command is invalid
                     }
-                    printf("getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key,
-                        command.pre.core,command.pre.uncore,command.pre.thread,
-                        command.post.core,command.post.uncore,command.post.thread);
+                    // printf("getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key,
+                    //     command.pre.core,command.pre.uncore,command.pre.thread,
+                    //     command.post.core,command.post.uncore,command.post.thread);
                     insertFreqModInstruction(C, utils.getLoopInsertPrePoint(lkey), command.pre);
                     // create post freqmod function call and insert it after exiting this loop
                     std::vector<Instruction*> insPos;
@@ -130,16 +130,16 @@ namespace {
                 // Insert enter/exit pair for every function call to maintain calling context
                 for(Function::iterator BB = F->begin(), E = F->end(); BB != E; ++BB) {
                     for(BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI) {
-                        if(auto *op=dyn_cast<CallInst>(&(*BI))) {
-                            Function* f = op->getCalledFunction();
-                            if(!(!f || f->isIntrinsic())) {
-                                std::string name = op->getCalledFunction()->getName().str();
-                                if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
-                                    printf("Matching [%s]: %s:",utils.ins2string(&(*BI)).c_str(), name.c_str());
-                                    //insertAffinity(C, op);
-                                }
-                            }
-                        }
+                        // if(auto *op=dyn_cast<CallInst>(&(*BI))) {
+                        //     Function* f = op->getCalledFunction();
+                        //     if(!(!f || f->isIntrinsic())) {
+                        //         std::string name = op->getCalledFunction()->getName().str();
+                        //         if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
+                        //             printf("Matching [%s]: %s:",utils.ins2string(&(*BI)).c_str(), name.c_str());
+                        //             //insertAffinity(C, op);
+                        //         }
+                        //     }
+                        // }
                         // uint64_t key = utils.lookupKey(utils.ins2string(&(*BI)));
                         // if(auto *op=dyn_cast<CallInst>(&(*BI))) {
                         //     Function* f = op->getCalledFunction();
@@ -154,7 +154,7 @@ namespace {
                         // FreqCommand_t command = adapter.getFreqCommand(key);
                         FreqCommand_t command = adapter.getFreqCommand(utils.ins2string(&(*BI)));
                         if(isInvalidFreqCommand(command)) continue; // quick pass when the command is invalid
-                        printf("Matched [%s]: ",utils.ins2string(&(*BI)).c_str());
+                        // printf("Matched [%s]: ",utils.ins2string(&(*BI)).c_str());
                         printf("getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key.c_str(),
                             command.pre.core,command.pre.uncore,command.pre.thread,
                             command.post.core,command.post.uncore,command.post.uncore);
@@ -167,7 +167,7 @@ namespace {
                             assert(!(!f || f->isIntrinsic()));
                             std::string name = op->getCalledFunction()->getName().str();
                             if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
-                                printf("Inserting for parallel region: %s\n",name.c_str());
+                                // printf("Inserting for parallel region: %s\n",name.c_str());
                                 insertFreqModInstruction(C, op, command.pre);
                             } else {
                                 insertFreqModInstruction(C, op, command.pre);
@@ -214,7 +214,7 @@ namespace {
             for(Module::iterator F = M.begin(), E = M.end(); F!= E; ++F) {
                 if (F->isDeclaration())
                     continue;
-                printf("F name = %s\n", F->getName().str().c_str());
+                // printf("F name = %s\n", F->getName().str().c_str());
                 if(F->getName()=="main" || F->getName()=="MAIN_") {
                     // insert init function into entry bbl of main function
                     Instruction *newInst = CallInst::Create(hookInit);
@@ -285,7 +285,7 @@ namespace {
             }
             if(core || uncore) {
                 // modify core and uncore frequency
-                errs() << "Insert CORE UNCORE frequency mod " << core << " " << uncore << "\n";
+                // errs() << "Insert CORE UNCORE frequency mod " << core << " " << uncore << "\n";
                 Instruction *freqmodInst = CallInst::Create(hookCUFreqModAll, { ConstantInt::get(Type::getInt64Ty(C), core), ConstantInt::get(Type::getInt64Ty(C), uncore) } );
                 freqmodInst->insertAfter(insPos);
                 return freqmodInst;
@@ -299,8 +299,8 @@ namespace {
 
 char FreqModPass::ID = 0;
 
-Pass* llvm::createFreqModPass() {
-  return new FreqModPass();
+Pass* llvm::createFreqModPass(std::string PAETTFreqCommFn) {
+  return new FreqModPass(PAETTFreqCommFn);
 }
 
 #define INITIALIZE_TEMPLATE_PASS_BEGIN(passName, arg, name, cfg, analysis)              \

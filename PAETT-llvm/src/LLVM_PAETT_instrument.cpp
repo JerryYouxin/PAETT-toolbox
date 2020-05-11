@@ -27,6 +27,7 @@
 #include "common.h"
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 
 using namespace llvm;
 namespace {
@@ -39,6 +40,29 @@ namespace {
         //     {"PAETT_inst_init","PAETT_inst_finalize","PAETT_inst_enter","PAETT_inst_exit","PAETT_print"}; // TODO malloc freee
         InstrmentByPerfPass() : ModulePass(ID) { 
             initializeInstrmentByPerfPassPass(*PassRegistry::getPassRegistry());
+            char* filterFile = getenv("PAETT_FILTER");
+            if(filterFile) {
+                FILE* fp = fopen(filterFile, "r");
+                if(fp==NULL) {
+                    filterEnabled = false;
+                } else {
+                    filterEnabled = true;
+                    char buff[101];
+                    while(EOF!=fscanf(fp, "%100[^\n]", buff)) {
+                        std::string key(buff);
+                        fscanf(fp, "%c", &buff[0]);
+                        while(buff[0]!='\n') {
+                            fscanf(fp, "%99[^\n]", &buff[1]);
+                            key += std::string(buff);
+                            fscanf(fp, "%c", &buff[0]);
+                        }
+                        filter.push_back(key);
+                    }
+                    fclose(fp);
+                }
+            } else {
+                filterEnabled = false;
+            }
             //initializeInstrmentByPerfPassPass<InstrumentMetrics>(*PassRegistry::getPassRegistry());
             // metrics.Register(); 
             // metrics.printEventList();
@@ -49,6 +73,7 @@ namespace {
             AU.addRequired<LoopInfoWrapperPass>();
         }
         virtual bool runOnModule(Module &M) {
+            PAETT_label_num = 0;
             LLVMContext &C = M.getContext();
             // common used types
 		    Type* VoidTy = Type::getVoidTy(C); 
@@ -76,24 +101,24 @@ namespace {
 #else
             // hookInit = M.getOrInsertFunction("PAETT_inst_init", VoidTy, Type::getInt32Ty(C), gEvents->getType());
             hookInit = M.getOrInsertFunction("PAETT_inst_init", VoidTy);
-            hookEnter = M.getOrInsertFunction("PAETT_inst_enter", VoidTy, Type::getInt64Ty(C));
-            hookExit = M.getOrInsertFunction("PAETT_inst_exit", VoidTy, Type::getInt64Ty(C));
-            hookThreadInit = M.getOrInsertFunction("PAETT_inst_thread_init", VoidTy, Type::getInt64Ty(C));
-            hookThreadFini = M.getOrInsertFunction("PAETT_inst_thread_fini", VoidTy, Type::getInt64Ty(C));
+            hookEnter = M.getOrInsertFunction("PAETT_inst_enter", VoidTy, Type::getInt8PtrTy(C));
+            hookExit = M.getOrInsertFunction("PAETT_inst_exit", VoidTy, Type::getInt8PtrTy(C));
+            hookThreadInit = M.getOrInsertFunction("PAETT_inst_thread_init", VoidTy, Type::getInt8PtrTy(C));
+            hookThreadFini = M.getOrInsertFunction("PAETT_inst_thread_fini", VoidTy, Type::getInt8PtrTy(C));
             hookFinalize = M.getOrInsertFunction("PAETT_inst_finalize", VoidTy);
             hookDebugPrint = M.getOrInsertFunction("PAETT_print", VoidTy);
 #endif
             // begin instrumentation
-            errs() << "=== Begin instrumentation ===\n";
+            // errs() << "=== Begin instrumentation ===\n";
             for(Module::iterator F = M.begin(), E = M.end(); F!= E; ++F) {
                 if (F->isDeclaration())
                     continue;
-		        errs().write_escaped(F->getName()) << "\n";
+		        // errs().write_escaped(F->getName()) << "\n";
                 // insert update calls first to make sure it will not conflict with inserted final calls.
                 insertInstrumentationCalls(M, &(*F));
                 if(F->getName()=="main" || F->getName()=="MAIN_") {
                     // insert init function into entry bbl of main function
-                    errs().write_escaped(F->getName()) << "***************" << "\n";
+                    // errs().write_escaped(F->getName()) << "***************" << "\n";
                     // Instruction *newInst = CallInst::Create(hookInit, {metrics.getPerfEventListSize(C), gEvents});
                     Instruction *newInst = CallInst::Create(hookInit, "");
                     newInst->insertBefore(&(*F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime()));
@@ -151,8 +176,14 @@ namespace {
         FunctionCallee hookThreadFini;
         FunctionCallee hookDebugPrint;
         PAETT_Utils utils;
+        uint64_t PAETT_label_num;
+        std::unordered_map<std::string, std::string> keyLabelMap;
+        std::vector<std::string> filter;
+        bool filterEnabled;
         Value* getInstKey(Module &M, LLVMContext &C, std::string debug_info) {
             if(utils.isInvalidString(debug_info)) return NULL;
+            // white list filtering if enabled
+            if(filterEnabled && std::find(filter.begin(), filter.end(), debug_info)==filter.end()) return NULL;
             ArrayType* StringTy = ArrayType::get(llvm::Type::getInt8Ty(C), debug_info.size()+1);
             Type* Int8Ty = Type::getInt8Ty(C);
             std::vector<llvm::Constant*> values;
@@ -161,7 +192,23 @@ namespace {
                 values.push_back(cv);
             }
             values.push_back(llvm::ConstantInt::get(Int8Ty, 0));
-            auto globalDeclaration = (llvm::GlobalVariable*) M.getOrInsertGlobal(debug_info.c_str(), StringTy);
+            // '@' should not appear in symbol as it will be parsed as symbol version information when send to linker to generate library
+            // std::replace( debug_info.begin(), debug_info.end(), '@', ':'); 
+            std::string label;
+            auto iter = keyLabelMap.find(debug_info);
+            if(iter==keyLabelMap.end()) {
+                // generate unique label for paett key
+                label  = std::string(".paett.key.");
+                label += std::to_string(PAETT_label_num);
+                label += std::string(".")+M.getName().str();
+                keyLabelMap[debug_info] = label;
+                ++PAETT_label_num;
+            } else {
+                label = iter->second;
+            }
+            // printf("KEY LABEL: %s : %s\n",label.c_str(), debug_info.c_str());
+            // now generate and initialze global constant string of debug info
+            auto globalDeclaration = (llvm::GlobalVariable*) M.getOrInsertGlobal(label.c_str(), StringTy);
             globalDeclaration->setInitializer(llvm::ConstantArray::get(StringTy, values));
             globalDeclaration->setConstant(true);
             globalDeclaration->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
@@ -245,12 +292,12 @@ namespace {
                             // fprintf(fp,"%ld\n",utils.lookupKey(utils.ins2string(op)));
                             /****************************************
                              * call PAETT_inst_thread_init(key)     *
-                             * call PAETT_inst_enter(key)           *
+                             * // call PAETT_inst_enter(key)        *
                              * call __kmpc_fork_*...                *
                              * call PAETT_inst_thread_fini(key)     *
                              ****************************************/
-                            Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                            enterInst->insertBefore(op);
+                            // Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                            // enterInst->insertBefore(op);
                             Instruction *threadInitInst = CallInst::Create(hookThreadInit,{key});
                             threadInitInst->insertBefore(op);
                             Instruction *exitInst = CallInst::Create(hookThreadFini,{key});
@@ -287,17 +334,17 @@ namespace {
                         Instruction *enterInst = CallInst::Create(hookEnter,{key});
                         enterInst->insertBefore(op);
                         auto unwind = op->getUnwindDest();
-#ifdef USE_OLD_LLVM
+// #ifdef USE_OLD_LLVM
                         Instruction *exitInstU = CallInst::Create(hookExit,{key});
                         exitInstU->insertBefore(&(*(unwind->getFirstInsertionPt()))); 
-#else
-                        Instruction* unw = &(*(unwind->getTerminator()));
-                        for(unsigned int i=0, n=unw->getNumSuccessors();i<n;++i) {
-                            auto suc = unw->getSuccessor(i);
-                            Instruction *exitInstU = CallInst::Create(hookExit,{key});
-                            exitInstU->insertBefore(&(*(suc->getFirstInsertionPt())));   
-                        }
-#endif
+// #else
+//                         Instruction* unw = &(*(unwind->getTerminator()));
+//                         for(unsigned int i=0, n=unw->getNumSuccessors();i<n;++i) {
+//                             auto suc = unw->getSuccessor(i);
+//                             Instruction *exitInstU = CallInst::Create(hookExit,{key});
+//                             exitInstU->insertBefore(&(*(suc->getFirstInsertionPt())));   
+//                         }
+// #endif
                         auto normal = op->getNormalDest();
                         Instruction *exitInstN = CallInst::Create(hookExit,{key});
                         exitInstN->insertBefore(&(*(normal->getFirstInsertionPt())));

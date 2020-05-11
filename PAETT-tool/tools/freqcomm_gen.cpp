@@ -360,7 +360,7 @@ namespace {
         void writeFreqCommandMapToCache() {
             fprintf(cache,"%d ",1); // placeholder to inform the cache file is valid
             for(auto B=freqCommandMap.begin(),E=freqCommandMap.end();B!=E;++B) {
-                fprintf(cache,"%lx %s %ld %ld %ld %ld %ld %ld\n",B->first, keyMap[B->second.key].c_str(),
+                fprintf(cache,"%lx %s;%ld %ld %ld %ld %ld %ld\n",B->first, keyMap[B->second.key].c_str(),
                     B->second.pre.core,B->second.pre.uncore, B->second.pre.thread,
                     B->second.post.core, B->second.post.uncore, B->second.post.thread);
             }

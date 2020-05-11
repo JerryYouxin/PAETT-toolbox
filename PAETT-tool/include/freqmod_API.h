@@ -1,6 +1,9 @@
 #ifndef __FREQMOD_API_H__
 #define __FREQMOD_API_H__
 #include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 void PAETT_init();
 void PAETT_finalize();
 // information query interface
@@ -24,4 +27,7 @@ void PAETT_modOMPThread(uint64_t n);
 // timers
 void PAETT_time_begin(uint64_t key);
 void PAETT_time_end(uint64_t key);
+#ifdef __cplusplus
+}
+#endif
 #endif

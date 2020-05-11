@@ -14,7 +14,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 
-#define PREALLOCATE_CCT
+// #define PREALLOCATE_CCT
 #define MULTI_THREAD
 #define USE_OPENMP 1
 
@@ -65,7 +65,7 @@ static uint64_t* eventDataBuffer[MAX_THREAD];
 static uint64_t eventDataBufferIndex[MAX_THREAD];
 static CallingContextLog* root[MAX_THREAD];
 static CallingContextLog* cur[MAX_THREAD] = {0};
-static bool danger[MAX_THREAD] = {false};
+static int danger = 0;
 static int* _eventList;
 // PAPI global vars
 static uint8_t initialized = 0;
@@ -148,39 +148,52 @@ static uint64_t g_cycles[MAX_THREAD] = {0};
 
 std::string profile_path;
 
-#define SIGNIFICANT_REGION_DETECT_LOG "significant_regions.log"
+#define SIGNIFICANT_REGION_DETECT_LOG "paett_filter.cct"
 
 bool __PAETT_detect_init() {
-#ifndef USE_SEPERATE_DETECT
-    return false;
-#else
-    int retval;
-    FILE* fp = fopen(SIGNIFICANT_REGION_DETECT_LOG,"rb");
-    if(fp==NULL) {
+    char* detectEnv = getenv("PAETT_DETECT_MODE");
+    char* detectResEnv = getenv("PAETT_DETECT_RES_PATH");
+    if(detectEnv && std::string(detectEnv)=="ENABLE") {
+        detection_mode = true;
         for(int i=0;i<MAX_THREAD;++i) {
+            root[i] = CallingContextLog::get();
             cur[i]=root[i];
             cur[i]->data.size = 0;
         }
+        int retval;
         CHECK_PAPI(PAPI_library_init(PAPI_VER_CURRENT), PAPI_VER_CURRENT);
 #ifdef MULTI_THREAD
         CHECK_PAPI_ISOK(PAPI_thread_init(THREAD_HANDLER));
 #endif
         printf("INFO: Will Running in detection mode for significant region detection\n");
         detection_mode = true;
-    } else {
-        auto rd = CallingContextLog::read(fp);
+    } else if(detectResEnv) {
+        FILE* fp = fopen(detectResEnv,"rb");
+        if(fp==NULL) {
+            printf("FILE %s could not open!\n", detectResEnv);
+            exit(1);
+        }
+        root[0] = CallingContextLog::get();
+        CallingContextLog* rd = CallingContextLog::read(fp);
+        root[0]->copyCCT(rd);
+        rd->clear();
+        CallingContextLog::free(rd);
         fclose(fp);
-        root[0]->copyCCTPath(rd);
-        delete rd;
+        detection_mode = false;
+    } else {
         detection_mode = false;
     }
     return detection_mode;
-#endif
 }
 
 void __PAETT_detect_finalize() {
-    pruneCCTWithThreshold(root[0], PRUNE_THRESHOLD);
-    CallingContextLog::fprint(SIGNIFICANT_REGION_DETECT_LOG, root[0]);
+    pruneCCTWithThreshold(root[0], PRUNE_THRESHOLD, false/*don't delete the pruned nodes now*/);
+    char* detectResEnv = getenv("PAETT_DETECT_RES_PATH");
+    if(detectResEnv) {
+        CallingContextLog::fprint(detectResEnv, root[0]);
+    } else {
+        CallingContextLog::fprint(LIBPAETT_INST_LOGFN, root[0]);
+    }
 }
 
 uint64_t* __allocate_eventLogSpace(int i, uint64_t s) {
@@ -206,12 +219,18 @@ void PAETT_inst_init() {
         fprintf(stderr, "Error Duplicated initialization!!!\n");
         exit(EXIT_FAILURE);
     }
-    danger[0]=true;
+    // PROFILE PATH
+    char* envPath = getenv("PAETT_OUTPUT_PATH");
+    if(envPath) {
+        profile_path = std::string(envPath);
+    } else {
+        profile_path = std::string("./");
+    }
     LOG = fopen(LIBPAETT_INST_LOGFN,"w");
     if(__PAETT_detect_init()) {
-        danger[0]=false;
         ++(cur[0]->data.ncall);
         initialized = true;
+        eventNum = 0;
         g_cycles[0] = PAPI_get_real_usec();
         assert(detection_mode);
         return;
@@ -240,13 +259,6 @@ void PAETT_inst_init() {
             }
         }
         fclose(efile);
-    }
-    // PROFILE PATH
-    char* envPath = getenv("PAETT_OUTPUT_PATH");
-    if(envPath) {
-        profile_path = std::string(envPath);
-    } else {
-        profile_path = std::string("./");
     }
     // other settings
     eventNum=ename.size(); 
@@ -301,7 +313,6 @@ void PAETT_inst_init() {
             exit(1);
         }
     }
-    danger[0]=false;
     /* Start counting */
     elapsed_us = PAPI_get_real_usec();
 	elapsed_cyc = PAPI_get_real_cyc();
@@ -316,39 +327,45 @@ void PAETT_inst_init() {
 #ifdef MULTI_THREAD
 // actually should be inserted after PAETT_inst_enter
 void PAETT_inst_thread_init(uint64_t key) {
+    if(!initialized) return;
     // int retval, i;
     // // CHECK_PAPI_ISOK(PAPI_stop(EventSet, counterVal));
     int tid = GET_THREADID;
+    if(tid!=0) return;
     // printf("thread_init for 0x%lx @ 0x%lx: tid=%d,danger=%d,initialized=%d\n",key,cur[tid]->key,tid,danger[tid],initialized); fflush(stdout);
     assert(tid<MAX_THREAD && "Thread number exceeds preallocated size!!!");
-    assert(cur[tid] && !danger[tid] && initialized);
-    if(cur[tid]->key!=key) {
-        PAETT_inst_enter(key);
-        // printf("After Enter: thread_init for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
-    }
-    danger[tid] = true;
-    // we should have already called PAETT_inst_enter
-    assert(cur[tid] && cur[tid]->key==key);
+    assert(cur[tid]);
+    // if(cur[tid]->key!=key) {
+    //     PAETT_inst_enter(key);
+    //     // printf("After Enter: thread_init for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
+    // }
+    PAETT_inst_enter(key);
+    ++danger;
+    // // we should have already called PAETT_inst_enter
+    // assert(cur[tid]);
+    // assert(cur[tid]->key==key);
     // Stop counting first to disable overflow
     cur[tid]->data.active_thread = std::max(cur[tid]->data.active_thread, (uint64_t)GET_ACTIVE_THREAD_NUM);
 }
 // Different from init, the fini instrumentation will do the work similiarly as PAETT_inst_exit, so only fini should be inserted.
 void PAETT_inst_thread_fini(uint64_t key) {
+    if(!initialized) return;
     int tid = GET_THREADID;
-    danger[tid] = false;
+    if(tid==0) --danger;
     // printf("thread_exit for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
     PAETT_inst_exit(key);
 }
 #endif
 void PAETT_inst_enter(uint64_t key) {
-    if(danger[0] || !initialized) return;
+    if(danger || !initialized) return;
+    // printf("%lx %s\n", key, reinterpret_cast<char*>(key));
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
     int tid = GET_THREADID;
+    if(tid!=0) return;
     INFO("Enter key=0x%lx\n",key);
     assert(tid>=0);
     assert(tid<MAX_THREAD);
-    danger[tid] = true;
     assert(cur[tid]);
     // energy
     if(collect_energy) {
@@ -367,14 +384,18 @@ void PAETT_inst_enter(uint64_t key) {
     //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
     //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
     ++(cur[tid]->data.ncall);
-    if(!detection_mode && cur[tid]->data.eventData==NULL) {
+    if(detection_mode) {
+        cur[tid]->data.active_thread = 1;
+        cur[tid]->data.size = 0;
+        cur[tid]->data.eventData = NULL;
+    }
+    if(!detection_mode && cur[tid]->data.eventData==NULL && (!cur[tid]->pruned)) {
         cur[tid]->data.active_thread = 1;
         cur[tid]->data.size = eventNum;
         cur[tid]->data.eventData = __allocate_eventLogSpace(tid,eventNum*2);//(uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
         // memset(cur[tid]->data.eventData, 0, sizeof(uint64_t)*eventNum);
     }
     assert(cur[tid]);
-    danger[tid] = false;
     // printf("PAPI Collect? %d %d\n",detection_mode, cur[tid]->pruned);
     if(!detection_mode && (!cur[tid]->pruned)) {
         // printf("Collect for PAPI %0xlx\n",key);
@@ -387,14 +408,14 @@ void PAETT_inst_enter(uint64_t key) {
 }
 
 void PAETT_inst_exit(uint64_t key) {
-    if(danger[0] || !initialized) return;
+    if(danger || !initialized) return;
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
     int tid = GET_THREADID;
+    if(tid!=0) return;
     INFO("Exit key=0x%lx\n",key);
     assert(tid>=0);
     assert(tid<MAX_THREAD);
-    danger[tid] = true;
     // energy
     if(collect_energy) {
         double energy = get_pkg_energy();
@@ -409,6 +430,7 @@ void PAETT_inst_exit(uint64_t key) {
     if(!detection_mode && (!cur[tid]->pruned)) {
         CHECK_PAPI_ISOK(PAPI_read(EventSet, counterVal));
     }
+redo:
     assert(cur[tid]);
     if(cur[tid]->key==key) {
         cur[tid]->data.cycle += e_cycles - g_cycles[tid];
@@ -442,14 +464,14 @@ void PAETT_inst_exit(uint64_t key) {
         }
 #else
         if (auto warn = cur[tid]->findStack(key)) {
-            printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
-            warn->printStack();
             cur[tid] = warn;
+            goto redo;
+        } else {
+            printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, (cur[tid]->key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(cur[tid]->key)), key, (key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
+            cur[tid]->printStack();
         }
 #endif
     }
-    
-    danger[tid] = false;
     if(collect_energy) {
         cur[tid]->data.last_energy = get_pkg_energy();
     }
@@ -461,6 +483,16 @@ void PAETT_inst_finalize() {
     int retval;
     if(detection_mode) {
         __PAETT_detect_finalize();
+        std::string prof_fn = profile_path+std::string(KEYMAP_FN".0"));
+        FILE* fkey = fopen(prof_fn.c_str(), "w");
+        if(fkey!=NULL) {
+            printf("Wring keymap to %s\n",prof_fn.c_str());
+            CallingContextLog::fprintKeyString(fkey, root[0]);
+            fclose(fkey);
+        } else {
+            printf("Could not open %s to log keymap info!\n",prof_fn.c_str());
+        }
+        initialized = false;
         return ;
     }
     CHECK_PAPI_ISOK(PAPI_stop(EventSet, counterVal));
