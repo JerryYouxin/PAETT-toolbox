@@ -107,6 +107,7 @@ int main(int argc, char* argv[]) {
     parse_args(argc, argv);
     readKeyMap();
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
+    if(root==NULL) return 1;
     mergeEventData(root);
     printf("Calling Context Tree:\n\n");
     print_cct(root, options.print_data);

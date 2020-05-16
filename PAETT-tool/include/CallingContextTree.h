@@ -179,6 +179,10 @@ struct CallingContextTree {
     }
     static CallingContextTree<Data_t>* read(const char* fn) {
         FILE* fp = fopen(fn, "rb");
+        if(fp==NULL) {
+            printf("Failed to open CCT profile %s\n", fn);
+            return NULL;
+        }
         CallingContextTree<Data_t>* root = read(fp);
         fclose(fp);
         return root;
@@ -231,6 +235,21 @@ struct CallingContextTree {
                 fscanf(fp, "%c", &buff[0]);
             }
             keyMap[keyVal] = key;
+        }
+    }
+    static void readStringKey(FILE* fp, std::unordered_map<std::string, uint64_t>& keyMap) {
+        uint64_t keyVal;
+        char buff[101];
+        while(EOF!=fscanf(fp, "%ld ",&keyVal)) {
+            fscanf(fp, "%100[^\n]", buff);
+            std::string key(buff);
+            fscanf(fp, "%c", &buff[0]);
+            while(buff[0]!='\n') {
+                fscanf(fp, "%99[^\n]", &buff[1]);
+                key += std::string(buff);
+                fscanf(fp, "%c", &buff[0]);
+            }
+            keyMap[key] = keyVal;
         }
     }
 };

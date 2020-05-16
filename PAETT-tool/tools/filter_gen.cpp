@@ -33,7 +33,7 @@ struct options_struct {
 } options;
 
 void usage() {
-    printf("Usage: paett_read_profile <options>\n");
+    printf("Usage: filter_gen <options>\n");
     printf("\tAvailable Options:\n");
     printf("\t\t--out <path/to/output>\t:set path to genereted PAETT's filter file for compiling, the default value is %s\n", "paett.filt");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
@@ -107,6 +107,7 @@ int main(int argc, char* argv[]) {
     parse_args(argc, argv);
     readKeyMap();
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
+    if(root==NULL) return 1;
     pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
     print_cct(root, false);
     generate_filter(root, options.output.c_str());

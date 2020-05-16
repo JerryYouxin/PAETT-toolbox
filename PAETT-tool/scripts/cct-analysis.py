@@ -8,6 +8,8 @@ import os
 
 import matplotlib.patches as patches
 
+import struct
+
 def heatmap(data, row_labels, col_labels, ax=None,
             cbar_kw={}, cbarlabel="", **kwargs):
     """
@@ -142,7 +144,7 @@ def draw(log_data, c_prec=0, u_prec=0, title="", pre=""):
         core = log_data[0][i]
         uncore = log_data[1][i]
         energy = log_data[2][i]
-        print(core, uncore, energy)
+        # print(core, uncore, energy)
         heatmaps[int(core)-8][int(uncore)-7] = energy
     # normalize to 22/20
     for c in range(0,15):
@@ -153,7 +155,7 @@ def draw(log_data, c_prec=0, u_prec=0, title="", pre=""):
     delta = 0.05
     for c in range(0,15):
         for uc in range(0,14):
-            if emin > heatmaps[c][uc]:
+            if emin > heatmaps[c][uc] and heatmaps[c][uc]!=0:
                 emin = heatmaps[c][uc]
                 cm = c
                 ucm = uc
@@ -162,8 +164,8 @@ def draw(log_data, c_prec=0, u_prec=0, title="", pre=""):
             if abs(heatmaps[c][uc]-emin) <= delta:
                 clist.append(c)
                 ulist.append(uc)
-    print(cm, ucm)
-    print(clist, ulist)
+    # print(cm, ucm)
+    # print(clist, ulist)
     # ============================================ #
     fig, ax2 = plt.subplots()
 
@@ -185,8 +187,9 @@ def draw(log_data, c_prec=0, u_prec=0, title="", pre=""):
         add_rect(c_prec-8, u_prec-7, 'orange', 9)
     # if the prec core/uncore energy is different from the minimum energy for more than 3%, add a tag
     if heatmaps[c_prec-8][u_prec-7] - emin > 0.03:
+        print(pre)
         pre += "#"
-    ax2.set_title(title)
+    # ax2.set_title(title)
     plt.savefig(pre+"heatmap.pdf", bbox_inches = 'tight')
     # plt.show()
     plt.close()
@@ -267,6 +270,28 @@ def getStaticalRegionData(data):
             res[reg][key] = (E_region[key][0],E_region[key][1],E_region[key][2])
     return res
 
+def getStaticFreqOfMinEnergy(data):
+    comb_list = []
+    E = []
+    E_region = data[2]
+    for key in E_region.keys():
+        for i in range(0, len(E_region[key][2])):
+            core = E_region[key][0][i]
+            uncore= E_region[key][1][i]
+            energy= E_region[key][2][i]
+            comb = (core, uncore)
+            found = False
+            for c in range(0,len(comb_list)):
+                if comb_list[c]==comb:
+                    E[c] += energy
+                    found = True
+                    break
+            if not found:
+                comb_list.append(comb)
+                E.append(energy)
+    index = np.argmin(E)
+    return comb_list[index], E[index]
+
 def getFreqOfMinEnergy(data):
     res = {}
     E_region = data[2]
@@ -300,16 +325,104 @@ def getFreqOfMinEnergyRegion(data):
         res[reg] = (core, uncore, energy)
     return res, reg2cct
     
+def make_core(core):
+    return core*100000
+
+def make_uncore(uncore):
+    return uncore*256+uncore
+
 def generate_frequency_commands(data, file_name):
     with open(file_name, "w") as f:
         f.write("1 ")
         for key in data.keys():
-            f.write("{0} {1};{2} {3} {4} {5} {6} {7}\n".format(0, key, data[key][0]*100000, data[key][1]*256+data[key][1], 0, 0,0,0))
+            f.write("{0} {1};{2} {3} {4} {5} {6} {7}\n".format(0, key, data[key][0]*100000, data[key][1]*256+data[key][1], 0, make_core(22),make_uncore(20),0))
+
+def parse_cctString_to_cct(data):
+    res = {} # "region":(core, uncore, energy, {...})
+    for key in data.keys():
+        regions = key.split("=>")
+        regions = regions[:-1]
+        p = res
+        i = len(regions)-1
+        while i>=0:
+            if regions[i] not in p.keys():
+                p[regions[i]] = [0, 0, 0, {}]
+            if i==0:
+                assert(p[regions[i]][0]==0)
+                p[regions[i]][0] = data[key][0]
+                p[regions[i]][1] = data[key][1]
+                p[regions[i]][2] = data[key][2]
+            p = p[regions[i]][3]
+            i = i - 1
+    return res
+
+def optimize_cct(cct):
+    for reg in cct.keys():
+        optimize_cct(cct[reg][3])
+        core=0
+        uncore=0
+        for r in cct[reg][3].keys():
+            if core!=0 and core!=cct[reg][3][r][0]:
+                core = 0
+                break
+            if uncore!=0 and uncore!=cct[reg][3][r][1]:
+                uncore = 0
+                break
+            core = cct[reg][3][r][0]
+            uncore = cct[reg][3][r][1]
+        if core!=0 and uncore!=0:
+            cct[reg][0] = core
+            cct[reg][1] = uncore
+
+def __generate_cct_frequency_commands(f, cct, keyMap, pre=[]):
+    for reg in cct.keys():
+        key = len(keyMap.keys())
+        if reg in keyMap.keys():
+            key = keyMap[reg]
+        else:
+            keyMap[reg] = key
+        # # key
+        # f.write(struct.pack("Q", key))
+        # # pruned
+        # f.write(struct.pack("Q", 0))
+        # # data::core
+        # f.write(struct.pack("Q", cct[reg][0]))
+        # # data::uncore
+        # f.write(struct.pack("Q", cct[reg][1]))
+        # # data::thread
+        # f.write(struct.pack("Q", 0))
+        # # number of children
+        # f.write(struct.pack("Q", len(cct[reg][3].keys())))
+        f.write(str(len(pre)+1)+" ")
+        for k in pre:
+            f.write(str(k)+" ")
+        f.write("{0} {1} {2} {3}\n".format(key, make_core(cct[reg][0]), make_uncore(cct[reg][1]), 0))
+        # f.write("{0} {1} {2} {3}\n".format(key, make_core(22), make_uncore(20), 0))
+        # children
+        __generate_cct_frequency_commands(f, cct[reg][3], keyMap, pre+[key])
+
+def generate_cct_frequency_commands(cct, name):
+    keyMap = {}
+    keyMap["ROOT"] = -1
+    with open(name+".cct", "w", newline='') as f:
+        # generate frequency commands first
+        __generate_cct_frequency_commands(f, cct["ROOT"][3], keyMap)
+    # generate frequency command filter for PAETT's compiler plugin
+    with open(name+".filt","w", newline='') as f:
+        for reg in keyMap.keys():
+            f.write(str(keyMap[reg])+" ")
+            f.write(reg+"\n")
+
+def print_cct(cct, pre=""):
+    for reg in cct.keys():
+        print(pre+"+ ",reg,cct[reg][:-1])
+        print_cct(cct[reg][3], "|  "+pre)
 
 def parse_cct_to_insert_point(data):
     res = {}
     for key in data.keys():
         regions = key.split("=>")
+        regions = regions[:-1] # delete the last one (it is always empty)
         fail=True
         for reg in regions:
             check = True
@@ -332,9 +445,11 @@ if __name__=="__main__":
     data = read_data([data_src])
     print("Filter dirty data...")
     data = filter_data(data, (22-8+1)*(20-7+1), 20)
-    # data = filter_data(data, 4, 20)
+    # data = filter_data(data, (20-7+1)+(14-7+1)+1, 20)
     FreqOfMinEnergy = getFreqOfMinEnergy(data[data_src])
     FreqOfMinEnergyRegion, reg2cct = getFreqOfMinEnergyRegion(data[data_src])
+    freq, Emin = getStaticFreqOfMinEnergy(data[data_src])
+    print("Static Minimal: ",freq, Emin)
     for reg in reg2cct.keys():
         if len(reg2cct[reg])>1:
             print(reg, FreqOfMinEnergyRegion[reg])
@@ -344,19 +459,23 @@ if __name__=="__main__":
                 print("\t",cct, "\n\t  ", FreqOfMinEnergy[cct])
                 tot_energy += FreqOfMinEnergy[cct][2]
             print("\tCCT-based Energy=",tot_energy, "J, Region-based Energy=", FreqOfMinEnergyRegion[reg][2],"J, Saving ", 100*(1-tot_energy/FreqOfMinEnergyRegion[reg][2]), "%")
+    cct = parse_cctString_to_cct(FreqOfMinEnergy)
+    print_cct(cct)
+    optimize_cct(cct)
+    generate_cct_frequency_commands(cct, data_src+"frequency_command")
     generate_frequency_commands(FreqOfMinEnergyRegion, data_src+"paett_model.cache.region")
-    generate_frequency_commands(parse_cct_to_insert_point(FreqOfMinEnergy), data_src+"paett_model.cache.cct")
+    # generate_frequency_commands(parse_cct_to_insert_point(FreqOfMinEnergy), data_src+"paett_model.cache.cct")
     # generate heatmap figures for further analysis
-    regData = getStaticalRegionData(data[data_src])
-    for reg in regData.keys():
-        path = "./figures/"+BENCH+reg.replace("/",";").replace(":","#")
-        try:
-            os.mkdir(path)
-        except FileExistsError:
-            pass
-        count = 0
-        for cct in regData[reg].keys():
-            figPath = path + "/" + str(count) + "-"
-            draw(regData[reg][cct], c_prec=FreqOfMinEnergyRegion[reg][0], u_prec=FreqOfMinEnergyRegion[reg][1], title=cct, pre=figPath)
-            count = count + 1
+    # regData = getStaticalRegionData(data[data_src])
+    # for reg in regData.keys():
+    #     path = "./figures/"+BENCH+reg.replace("/",";").replace(":","#")
+    #     try:
+    #         os.mkdir(path)
+    #     except FileExistsError:
+    #         pass
+    #     count = 0
+    #     for cct in regData[reg].keys():
+    #         figPath = path + "/" + str(count) + "-"
+    #         draw(regData[reg][cct], c_prec=FreqOfMinEnergyRegion[reg][0], u_prec=FreqOfMinEnergyRegion[reg][1], title=cct, pre=figPath)
+    #         count = count + 1
 

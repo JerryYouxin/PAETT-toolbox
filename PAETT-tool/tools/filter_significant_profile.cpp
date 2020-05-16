@@ -31,7 +31,7 @@ struct options_struct {
 } options;
 
 void usage() {
-    printf("Usage: paett_read_profile <options>\n");
+    printf("Usage: filter_significant_profile <options>\n");
     printf("\tAvailable Options:\n");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
 }
@@ -97,6 +97,7 @@ int main(int argc, char* argv[]) {
     parse_args(argc, argv);
     readKeyMap();
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
+    if(root==NULL) return 1;
     splitEnergyData(root);
     pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
     print_significant(root);

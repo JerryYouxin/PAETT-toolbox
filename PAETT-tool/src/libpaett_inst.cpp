@@ -150,6 +150,8 @@ std::string profile_path;
 
 #define SIGNIFICANT_REGION_DETECT_LOG "paett_filter.cct"
 
+int warn_time;
+
 bool __PAETT_detect_init() {
     char* detectEnv = getenv("PAETT_DETECT_MODE");
     char* detectResEnv = getenv("PAETT_DETECT_RES_PATH");
@@ -226,6 +228,7 @@ void PAETT_inst_init() {
     } else {
         profile_path = std::string("./");
     }
+    warn_time = 0;
     LOG = fopen(LIBPAETT_INST_LOGFN,"w");
     if(__PAETT_detect_init()) {
         ++(cur[0]->data.ncall);
@@ -467,8 +470,11 @@ redo:
             cur[tid] = warn;
             goto redo;
         } else {
-            printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, (cur[tid]->key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(cur[tid]->key)), key, (key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
-            cur[tid]->printStack();
+            if(warn_time<10) {
+                printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, (cur[tid]->key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(cur[tid]->key)), key, (key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
+                cur[tid]->printStack();
+            }
+            ++warn_time;
         }
 #endif
     }
@@ -483,7 +489,7 @@ void PAETT_inst_finalize() {
     int retval;
     if(detection_mode) {
         __PAETT_detect_finalize();
-        std::string prof_fn = profile_path+std::string(KEYMAP_FN".0"));
+        std::string prof_fn = profile_path+std::string(KEYMAP_FN".0");
         FILE* fkey = fopen(prof_fn.c_str(), "w");
         if(fkey!=NULL) {
             printf("Wring keymap to %s\n",prof_fn.c_str());

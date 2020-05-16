@@ -36,14 +36,14 @@ namespace {
         static char ID;
         // InstrumentMetrics metrics;
         uint64_t mid;
-        // const std::string ignoreList[] = 
-        //     {"PAETT_inst_init","PAETT_inst_finalize","PAETT_inst_enter","PAETT_inst_exit","PAETT_print"}; // TODO malloc freee
         InstrmentByPerfPass() : ModulePass(ID) { 
             initializeInstrmentByPerfPassPass(*PassRegistry::getPassRegistry());
+            //initializeInstrmentByPerfPassPass<InstrumentMetrics>(*PassRegistry::getPassRegistry());
             char* filterFile = getenv("PAETT_FILTER");
             if(filterFile) {
                 FILE* fp = fopen(filterFile, "r");
                 if(fp==NULL) {
+                    printf("Warning: filter file %s could not open! Disable filtering\n", filterFile);
                     filterEnabled = false;
                 } else {
                     filterEnabled = true;
@@ -63,9 +63,41 @@ namespace {
             } else {
                 filterEnabled = false;
             }
-            //initializeInstrmentByPerfPassPass<InstrumentMetrics>(*PassRegistry::getPassRegistry());
-            // metrics.Register(); 
-            // metrics.printEventList();
+            char* freqModFilterFile = getenv("PAETT_CCT_FREQUENCY_COMMAND_FILTER");
+            if(freqModFilterFile) {
+                if(filterFile) {
+                    printf("Error: Both PAETT_FILTER and PAETT_CCT_FREQUENCY_COMMAND_FILTER are configured. Please configure only one of them at a time.\n");
+                    printf("\tPAETT_FILTER = %s\n", filterFile);
+                    printf("\tPAETT_CCT_FREQUENCY_COMMAND_FILTER = %s\n", freqModFilterFile);
+                    exit(-1);
+                }
+                FILE* fp = fopen(freqModFilterFile, "r");
+                if(fp==NULL) {
+                    printf("Warning: filter file for frequency optimization %s could not open!\n", freqModFilterFile);
+                    CCTFreqModEnabled = false;
+                    // exit(-1);
+                } else {
+                    CCTFreqModEnabled = true;
+                    uint64_t keyVal;
+                    char buff[101];
+                    // CCT Filter File Format: <keyVal> <debug_info>\n
+                    while(EOF!=fscanf(fp, "%ld ", &keyVal)) {
+                        fscanf(fp, "%100[^\n]", buff);
+                        std::string key(buff);
+                        fscanf(fp, "%c", &buff[0]);
+                        while(buff[0]!='\n') {
+                            fscanf(fp, "%99[^\n]", &buff[1]);
+                            key += std::string(buff);
+                            fscanf(fp, "%c", &buff[0]);
+                        }
+                        filterMap[key] = keyVal;
+                        // printf("%s %d %ld\n",(key+"\0").c_str(), key.c_str()[key.size()-1], keyVal);
+                    }
+                    fclose(fp);
+                }
+            } else {
+                CCTFreqModEnabled = false;
+            }
         }
         ~InstrmentByPerfPass() {};
         void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -79,47 +111,40 @@ namespace {
 		    Type* VoidTy = Type::getVoidTy(C); 
             // prepare for instrumentation
             std::string m_name = M.getName().str();
-            // read keymap if exists
-            //utils.readKeyMap(m_name, false/*disable safe_check*/);
-            //mid = utils.getMID(m_name);
-            // global variables (arrays of event)
-            // gEvents = new GlobalVariable(M, metrics.getPerfEventListType(C), false, GlobalValue::LinkageTypes::InternalLinkage, metrics.getPerfEventList(C), "log.events");
             // func prototypes
+            Type* keyType;
+            if(CCTFreqModEnabled) {
+                keyType = Type::getInt64Ty(C);
+            } else {
+                // Although the PAETT_inst uses unsigned 64-bit integer as input argument of the API, 
+                // Int8Ptr type is more nature for LLVM strong type conversion (pointer to a char array)
+                keyType = Type::getInt8PtrTy(C);
+            }
 #ifdef USE_OLD_LLVM
-            //hookInit =Function::Create(FunctionType::get(VoidTy, {Type::getInt32Ty(C), gEvents->getType()}, false), Function::ExternalLinkage, "PAETT_inst_init", &M);
             hookInit =Function::Create(FunctionType::get(VoidTy, {}, false), Function::ExternalLinkage, "PAETT_inst_init", &M);
-            hookEnter = Function::Create(FunctionType::get(VoidTy, {Type::getInt8PtrTy(C)}, false), Function::ExternalLinkage, "PAETT_inst_enter", &M);
-            hookExit = Function::Create(FunctionType::get(VoidTy, {Type::getInt8PtrTy(C)}, false), Function::ExternalLinkage, "PAETT_inst_exit", &M);
-            hookThreadInit = Function::Create(FunctionType::get(VoidTy, {Type::getInt8PtrTy(C)}, false), Function::ExternalLinkage, "PAETT_inst_thread_init", &M);
-            hookThreadFini = Function::Create(FunctionType::get(VoidTy, {Type::getInt8PtrTy(C)}, false), Function::ExternalLinkage, "PAETT_inst_thread_fini", &M);
-            // hookEnter = Function::Create(FunctionType::get(VoidTy, {Type::getInt64Ty(C)}, false), Function::ExternalLinkage, "PAETT_inst_enter", &M);
-            // hookExit = Function::Create(FunctionType::get(VoidTy, {Type::getInt64Ty(C)}, false), Function::ExternalLinkage, "PAETT_inst_exit", &M);
-            // hookThreadInit = Function::Create(FunctionType::get(VoidTy, {Type::getInt64Ty(C)}, false), Function::ExternalLinkage, "PAETT_inst_thread_init", &M);
-            // hookThreadFini = Function::Create(FunctionType::get(VoidTy, {Type::getInt64Ty(C)}, false), Function::ExternalLinkage, "PAETT_inst_thread_fini", &M);
+            hookEnter = Function::Create(FunctionType::get(VoidTy, {keyType}, false), Function::ExternalLinkage, "PAETT_inst_enter", &M);
+            hookExit = Function::Create(FunctionType::get(VoidTy, {keyType}, false), Function::ExternalLinkage, "PAETT_inst_exit", &M);
+            hookThreadInit = Function::Create(FunctionType::get(VoidTy, {keyType}, false), Function::ExternalLinkage, "PAETT_inst_thread_init", &M);
+            hookThreadFini = Function::Create(FunctionType::get(VoidTy, {keyType}, false), Function::ExternalLinkage, "PAETT_inst_thread_fini", &M);
             hookFinalize = Function::Create(FunctionType::get(VoidTy, {}, false), Function::ExternalLinkage, "PAETT_inst_finalize", &M);
             hookDebugPrint = Function::Create(FunctionType::get(VoidTy, {}, false), Function::ExternalLinkage, "PAETT_print", &M);
 #else
-            // hookInit = M.getOrInsertFunction("PAETT_inst_init", VoidTy, Type::getInt32Ty(C), gEvents->getType());
             hookInit = M.getOrInsertFunction("PAETT_inst_init", VoidTy);
-            hookEnter = M.getOrInsertFunction("PAETT_inst_enter", VoidTy, Type::getInt8PtrTy(C));
-            hookExit = M.getOrInsertFunction("PAETT_inst_exit", VoidTy, Type::getInt8PtrTy(C));
-            hookThreadInit = M.getOrInsertFunction("PAETT_inst_thread_init", VoidTy, Type::getInt8PtrTy(C));
-            hookThreadFini = M.getOrInsertFunction("PAETT_inst_thread_fini", VoidTy, Type::getInt8PtrTy(C));
+            hookEnter = M.getOrInsertFunction("PAETT_inst_enter", VoidTy, keyType);
+            hookExit = M.getOrInsertFunction("PAETT_inst_exit", VoidTy, keyType);
+            hookThreadInit = M.getOrInsertFunction("PAETT_inst_thread_init", VoidTy, keyType);
+            hookThreadFini = M.getOrInsertFunction("PAETT_inst_thread_fini", VoidTy, keyType);
             hookFinalize = M.getOrInsertFunction("PAETT_inst_finalize", VoidTy);
             hookDebugPrint = M.getOrInsertFunction("PAETT_print", VoidTy);
 #endif
             // begin instrumentation
-            // errs() << "=== Begin instrumentation ===\n";
             for(Module::iterator F = M.begin(), E = M.end(); F!= E; ++F) {
                 if (F->isDeclaration())
                     continue;
-		        // errs().write_escaped(F->getName()) << "\n";
                 // insert update calls first to make sure it will not conflict with inserted final calls.
                 insertInstrumentationCalls(M, &(*F));
                 if(F->getName()=="main" || F->getName()=="MAIN_") {
                     // insert init function into entry bbl of main function
-                    // errs().write_escaped(F->getName()) << "***************" << "\n";
-                    // Instruction *newInst = CallInst::Create(hookInit, {metrics.getPerfEventListSize(C), gEvents});
                     Instruction *newInst = CallInst::Create(hookInit, "");
                     newInst->insertBefore(&(*F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime()));
                     newInst = CallInst::Create(hookDebugPrint, "");
@@ -129,7 +154,6 @@ namespace {
 				    InstrmentByPerfPass::runOnBasicBlock(BB);
 			    }
             }
-            // utils.printKeyMap(m_name);
             return true;
         }
         // instrument here
@@ -143,7 +167,6 @@ namespace {
                 if(dyn_cast<ReturnInst>(&(*BI))) {
                     // This is quite C-like hack. TODO: general solution
                     if (func_name=="main" || func_name=="MAIN_") {
-                        // errs() << "!!!!!!!!! main\n";
                         Instruction *newInst = CallInst::Create(hookFinalize,"");
                         newInst->insertBefore(&(*BI));
                     }
@@ -155,7 +178,6 @@ namespace {
                     std::string calleeName = callee.str();
                     if(calleeName=="exit") {
                         // C program may exit by calling exit, not returning
-                        // errs() << "!!!!!!!!! exit\n";
                         Instruction *newInst = CallInst::Create(hookFinalize,"");
                         newInst->insertBefore(&(*BI));
                     }
@@ -164,7 +186,6 @@ namespace {
             return true;
         }
         private:
-        // GlobalVariable* gEvents;// global variable perf events
 #ifdef USE_OLD_LLVM
         typedef Function* FunctionCallee;
 #endif
@@ -180,10 +201,21 @@ namespace {
         std::unordered_map<std::string, std::string> keyLabelMap;
         std::vector<std::string> filter;
         bool filterEnabled;
+        std::unordered_map<std::string, uint64_t> filterMap;
+        bool CCTFreqModEnabled;
         Value* getInstKey(Module &M, LLVMContext &C, std::string debug_info) {
             if(utils.isInvalidString(debug_info)) return NULL;
             // white list filtering if enabled
             if(filterEnabled && std::find(filter.begin(), filter.end(), debug_info)==filter.end()) return NULL;
+            // if CCT Frequency optimization filter is configured, use the specified key value instead
+            if(CCTFreqModEnabled) {
+                auto keyPair = filterMap.find(debug_info);
+                if(keyPair==filterMap.end()) return NULL;
+                return llvm::ConstantInt::get(Type::getInt64Ty(C), keyPair->second);
+            }
+            // otherwise, generate a global string containing the debug_info and take the address of the beginning of the string as key value
+            // this will guarantee the different string has different key value and same code location will has the same key value
+            // and also it will provide the actual debug information for profiling tool to give better/more readable profiling results.
             ArrayType* StringTy = ArrayType::get(llvm::Type::getInt8Ty(C), debug_info.size()+1);
             Type* Int8Ty = Type::getInt8Ty(C);
             std::vector<llvm::Constant*> values;
@@ -192,8 +224,6 @@ namespace {
                 values.push_back(cv);
             }
             values.push_back(llvm::ConstantInt::get(Int8Ty, 0));
-            // '@' should not appear in symbol as it will be parsed as symbol version information when send to linker to generate library
-            // std::replace( debug_info.begin(), debug_info.end(), '@', ':'); 
             std::string label;
             auto iter = keyLabelMap.find(debug_info);
             if(iter==keyLabelMap.end()) {
@@ -215,8 +245,6 @@ namespace {
             globalDeclaration->setUnnamedAddr (llvm::GlobalValue::UnnamedAddr::Global);
             // 4. Return a cast to an i8*
             return llvm::ConstantExpr::getBitCast(globalDeclaration, Int8Ty->getPointerTo());
-            // uint64_t key = utils.getInstKeyInt64(mid, debug_info);
-            // return ConstantInt::get(Type::getInt64Ty(C), key);
         }
         void getFunctionExitOps(Function* F, std::vector<Instruction*>& list) {
             for(Function::iterator BB = F->begin(), E = F->end(); BB != E; ++BB) {
@@ -256,14 +284,12 @@ namespace {
                 list.push_back(lkey);
             }
 #endif
-            //errs() << "==== 1 ======\n";
             IRBuilder<> builder(C);
             for(auto lkey : list) {
                 // First get context key of this loop
                 if(lkey->isInvalid()) continue; // the loop is no longer invalid, so skip it.
                 key = getInstKey(M, C, utils.loop2string(lkey)); // get key value associated to this loop's debug info
                 if(key==NULL) continue; // invalid key
-                // key = builder.CreateGlobalString(utils.loop2string(lkey));
                 Instruction *enterInst = CallInst::Create(hookEnter,{key});
                 enterInst->insertBefore(utils.getLoopInsertPrePoint(lkey));
                 // create paett_inst_exit function call and insert it after exiting this loop
@@ -275,7 +301,6 @@ namespace {
                 }
             } // end iterate loops
             // Insert enter/exit pair for every function call to maintain calling context
-            // FILE* fp = fopen("parallel.region","a");
             for(Function::iterator BB = F->begin(), E = F->end(); BB != E; ++BB) {
 			 	for(BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI) {
                     if(auto *op=dyn_cast<CallInst>(&(*BI))) {
@@ -288,16 +313,12 @@ namespace {
                         if(name=="__kmpc_fork_call" || name=="__kmpc_fork_teams") {
                             key = getInstKey(M, C, utils.ins2string(op));
                             if(key==NULL) continue; // invalid key
-                            // printf("%ld(%d|%d):%s\n",utils.getInstKeyInt64(mid,utils.ins2string(op)),mid,utils.keySize,utils.ins2string(op).c_str());
-                            // fprintf(fp,"%ld\n",utils.lookupKey(utils.ins2string(op)));
                             /****************************************
                              * call PAETT_inst_thread_init(key)     *
                              * // call PAETT_inst_enter(key)        *
                              * call __kmpc_fork_*...                *
                              * call PAETT_inst_thread_fini(key)     *
                              ****************************************/
-                            // Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                            // enterInst->insertBefore(op);
                             Instruction *threadInitInst = CallInst::Create(hookThreadInit,{key});
                             threadInitInst->insertBefore(op);
                             Instruction *exitInst = CallInst::Create(hookThreadFini,{key});
@@ -334,24 +355,14 @@ namespace {
                         Instruction *enterInst = CallInst::Create(hookEnter,{key});
                         enterInst->insertBefore(op);
                         auto unwind = op->getUnwindDest();
-// #ifdef USE_OLD_LLVM
                         Instruction *exitInstU = CallInst::Create(hookExit,{key});
                         exitInstU->insertBefore(&(*(unwind->getFirstInsertionPt()))); 
-// #else
-//                         Instruction* unw = &(*(unwind->getTerminator()));
-//                         for(unsigned int i=0, n=unw->getNumSuccessors();i<n;++i) {
-//                             auto suc = unw->getSuccessor(i);
-//                             Instruction *exitInstU = CallInst::Create(hookExit,{key});
-//                             exitInstU->insertBefore(&(*(suc->getFirstInsertionPt())));   
-//                         }
-// #endif
                         auto normal = op->getNormalDest();
                         Instruction *exitInstN = CallInst::Create(hookExit,{key});
                         exitInstN->insertBefore(&(*(normal->getFirstInsertionPt())));
                     }
                 }
             }
-            // fclose(fp);
         }
     };
 }
