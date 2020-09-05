@@ -1,14 +1,13 @@
 import numpy as np
 import math
 import os
-
+#'''
 import matplotlib
 import matplotlib.pyplot as plt
 import os
 
 import matplotlib.patches as patches
-
-import struct
+#'''
 
 def heatmap(data, row_labels, col_labels, ax=None,
             cbar_kw={}, cbarlabel="", **kwargs):
@@ -238,27 +237,143 @@ def filter_data(data, test_num, energy_threshold):
         E_region_new = {}
         E_region= data[b][2]
         for key in E_region.keys():
-            if len(E_region[key][2]) != test_num:
+            record = E_region[key]
+            if len(record[2]) != test_num:
                 # print("Remove region {0} as it has incorrect number of records ({1} data needed but has {2})".format(key, test_num, len(E_region[key][2])))
-                continue
-            if min(E_region[key][2]) < energy_threshold:
+                # continue
+                key = "=>".join(key.split("=>")[1:])
+            if max(record[2]) < energy_threshold:
                 # print("Remove region {0} as it has too small energy values ({1} J, threshold={2} J)".format(key, min(E_region[key][2]), energy_threshold))
-                continue
+                # continue
+                key = "=>".join(key.split("=>")[1:])
             # now use the maximum core/uncore's papi counter value as input (typically the last record)
-            papi_val = E_region[key][3][-1][2:]
-            E_region_new[key] = (E_region[key][0],E_region[key][1],E_region[key][2],[])
-            for i in range(0,len(E_region[key][0])):
-                    E_region_new[key][3].append([E_region_new[key][0][i], E_region_new[key][1][i]]+papi_val)
+            papi_val = record[3][-1][2:]
+            if key not in E_region_new.keys():
+                #E_region_new[key] = (record[0],record[1],record[2],[])
+                E_region_new[key] = ([0 for i in range(0,test_num)], [0 for i in range(0,test_num)], [0 for i in range(0,test_num)],[[0,0,0,0,0,0,0,0,0] for i in range(0, test_num)])
+                for i in range(0,len(record[0])):
+                    E_region_new[key][0][i] = record[0][i]
+                    E_region_new[key][1][i] = record[1][i]
+                    E_region_new[key][2][i] = record[2][i]
+                    #E_region_new[key][3].append([E_region_new[key][0][i], E_region_new[key][1][i]]+papi_val)
+                    E_region_new[key][3][i] = [E_region_new[key][0][i], E_region_new[key][1][i]]+papi_val
+            else:
+                for i in range(0,len(record[0])):
+                    E_region_new[key][0][i] = record[0][i]
+                    E_region_new[key][1][i] = record[1][i]
+                    E_region_new[key][2][i] += record[2][i]
+                    for j in range(0,len(papi_val)):
+                        E_region_new[key][3][i][j] += papi_val[j]
             I_train += E_region_new[key][3]
             O_train += E_region_new[key][2]
         print("{0}: Removed {1} regions containing dirty data, Remain {2} regions.".format(b,len(E_region.keys())-len(E_region_new.keys()), len(E_region_new.keys())))
         res[b] = (I_train, O_train, E_region_new)
     return res
 
+def __load_thread_cct_v2(cct_fn, keymap_fn):
+    keymap = {}
+    with open(keymap_fn, "r") as f:
+        for line in f:
+            cont = line.split(" ")
+            keymap[cont[0]] = " ".join(cont[1:])[:-1]
+    cct = {}
+    #cct["ROOT"] = [0, 0, 0, 0, {}]
+    with open(cct_fn, "r") as f:
+        for line in f:
+            cont = line.split(" ")
+            n = int(cont[0])
+            #p = cct["ROOT"][4]
+            p = cct
+            for i in range(0, n):
+                reg = keymap[cont[i+1]]
+                if reg not in p.keys():
+                    p[reg] = [0, 0, 0, {}, {}, []]
+                if i==n-1:
+                    p[reg][0] = int(0) # core
+                    p[reg][1] = int(0) # uncore
+                    p[reg][2] = int(cont[n+3]) # thread
+                p = p[reg][4]
+    return cct
+
+def parse_data_to_cct(data, cct_fn, keymap_fn):
+    cct = __load_thread_cct_v2(cct_fn, keymap_fn)
+    E_region = data[2]
+    for key in E_region.keys():
+        regions = key.split("=>")
+        regions = regions[:-1]
+        p = cct
+        i = len(regions)-1
+        while i>=0:
+            if regions[i] not in p.keys():
+                # core, uncore, thread, {"core uncore":(core, uncore, metric, energy)}, subtree
+                p[regions[i]] = [0, 0, 0, {}, {}, []]
+            if i==0:
+                #assert(p[regions[i]][0]==0)
+                # p[regions[i]][0] = E_region[key][0] # core
+                # p[regions[i]][1] = E_region[key][1] # uncore
+                p[regions[i]][5] = E_region[key][2] # energy
+                for j in range(0, len(E_region[key][0])):
+                    kk = "{0} {1}".format(E_region[key][0][j], E_region[key][1][j])
+                    p[regions[i]][3][kk] = [ E_region[key][0][j], E_region[key][1][j], E_region[key][3][j], E_region[key][2][j] ]
+                    print(kk, p[regions[i]][3][kk])
+            p = p[regions[i]][4] # switch to sub-tree
+            i = i - 1
+    return cct
+
+def __filter_cct(cct_node, test_num, energy_threshold, name):
+    filtered=False
+    for key in cct_node[4].keys():
+        filtered = filtered or __filter_cct(cct_node[4][key], test_num, energy_threshold, name+"=>"+key)
+        print(name+"=>"+key, len(cct_node[4][key][3].keys()), len(cct_node[4][key][5]))
+        if (len(cct_node[4][key][3].keys()) != test_num) or (max(cct_node[4][key][5]) < energy_threshold):
+            # merge data to parent
+            for i in cct_node[4][key][3].keys():
+                if i not in cct_node[3].keys():
+                    cct_node[3][i] = cct_node[4][key][3][i]
+                else:
+                    cct_node[3][i][3] += cct_node[4][key][3][i][3]
+                    for j in range(0, len(cct_node[4][key][3][i][2])):
+                        cct_node[3][i][2][j] += cct_node[4][key][3][i][2][j]
+            cct_node[5] = []
+            for i in cct_node[3]:
+                cct_node[5].append(cct_node[3][i][3])
+            if len(cct_node[4][key][3].keys())!=0:
+                filtered = True
+                print("Filtered", key)
+            # clear this child's data
+            cct_node[4][key][3] = {}
+    return filtered
+
+def filter_cct(cct, test_num, energy_threshold):
+    while __filter_cct(cct["ROOT"], test_num, energy_threshold, "ROOT"):
+        pass
+    
+def getOptFreq4CCT(cct):
+    for key in cct.keys():
+        getOptFreq4CCT(cct[key][4])
+        energy_all = []
+        core_all   = []
+        uncore_all = []
+        print(len(cct[key][3].keys()))
+        for c in cct[key][3].keys():
+            energy_all.append(cct[key][3][c][3])
+            core_all.append(cct[key][3][c][0])
+            uncore_all.append(cct[key][3][c][1])
+        if len(energy_all)>0:
+            index = np.argmin(energy_all)
+            cct[key][0] = core_all[index]
+            cct[key][1] = uncore_all[index]
+
 def getStaticalRegionData(data):
     res = {}
     E_region = data[2]
     for key in E_region.keys():
+        if len(E_region[key][2]) != (22-8+1)*(20-7+1):
+                # print("Remove region {0} as it has incorrect number of records ({1} data needed but has {2})".format(key, test_num, len(E_region[key][2])))
+                continue
+        if min(E_region[key][2]) < 1:
+            # print("Remove region {0} as it has too small energy values ({1} J, threshold={2} J)".format(key, min(E_region[key][2]), energy_threshold))
+            continue
         reg = key.split("=>")[0]
         if reg not in res.keys():
             res[reg] = {}
@@ -308,7 +423,9 @@ def getFreqOfMinEnergyRegion(data):
     reg2cct = {}
     E_region = data[2]
     E_region_new = {}
+    E = 0
     for key in E_region.keys():
+        E += E_region[key][2][-1]
         reg = key.split("=>")[0]
         if reg not in E_region_new.keys():
             E_region_new[reg] = (E_region[key][0],E_region[key][1],E_region[key][2]) # (core, uncore, energy)
@@ -322,7 +439,8 @@ def getFreqOfMinEnergyRegion(data):
         core = E_region_new[reg][0][index]
         uncore= E_region_new[reg][1][index]
         energy= E_region_new[reg][2][index]
-        res[reg] = (core, uncore, energy)
+        res[reg] = (core, uncore, E_region_new[reg][2][-1])
+        print("{0}:\t{1} J ({2} J),\trate={3}%".format(reg, energy, E,energy/E*100))
     return res, reg2cct
     
 def make_core(core):
@@ -337,8 +455,35 @@ def generate_frequency_commands(data, file_name):
         for key in data.keys():
             f.write("{0} {1};{2} {3} {4} {5} {6} {7}\n".format(0, key, data[key][0]*100000, data[key][1]*256+data[key][1], 0, make_core(22),make_uncore(20),0))
 
-def parse_cctString_to_cct(data):
-    res = {} # "region":(core, uncore, energy, {...})
+def load_thread_cct(cct_fn, keymap_fn):
+    keymap = {}
+    with open(keymap_fn, "r") as f:
+        for line in f:
+            cont = line.split(" ")
+            keymap[cont[0]] = " ".join(cont[1:])[:-1]
+    cct = {}
+    #cct["ROOT"] = [0, 0, 0, 0, {}]
+    with open(cct_fn, "r") as f:
+        for line in f:
+            cont = line.split(" ")
+            n = int(cont[0])
+            #p = cct["ROOT"][4]
+            p = cct
+            for i in range(0, n):
+                reg = keymap[cont[i+1]]
+                if reg not in p.keys():
+                    p[reg] = [0, 0, 0, 0, {}]
+                if i==n-1:
+                    #p[reg][0] = int(cont[n+1]) # core
+                    #p[reg][1] = int(cont[n+2]) # uncore
+                    p[reg][0] = int(0) # core
+                    p[reg][1] = int(0) # uncore
+                    p[reg][3] = int(cont[n+3]) # thread
+                p = p[reg][4]
+    return cct
+
+def parse_cctString_to_cct(data, cct_init={}):
+    res = cct_init # "region":(core, uncore, energy, thread, {...})
     for key in data.keys():
         regions = key.split("=>")
         regions = regions[:-1]
@@ -346,67 +491,87 @@ def parse_cctString_to_cct(data):
         i = len(regions)-1
         while i>=0:
             if regions[i] not in p.keys():
-                p[regions[i]] = [0, 0, 0, {}]
+                p[regions[i]] = [0, 0, 0, 0, {}]
             if i==0:
-                assert(p[regions[i]][0]==0)
+                #assert(p[regions[i]][0]==0)
                 p[regions[i]][0] = data[key][0]
                 p[regions[i]][1] = data[key][1]
                 p[regions[i]][2] = data[key][2]
-            p = p[regions[i]][3]
+            p = p[regions[i]][4]
             i = i - 1
     return res
 
-def optimize_cct(cct):
+def __optimize_cct(cct):
     for reg in cct.keys():
-        optimize_cct(cct[reg][3])
+        __optimize_cct(cct[reg][4])
         core=0
         uncore=0
-        for r in cct[reg][3].keys():
-            if core!=0 and core!=cct[reg][3][r][0]:
+        for r in cct[reg][4].keys():
+            if core!=0 and core!=cct[reg][4][r][0]:
                 core = 0
                 break
-            if uncore!=0 and uncore!=cct[reg][3][r][1]:
+            if uncore!=0 and uncore!=cct[reg][4][r][1]:
                 uncore = 0
                 break
-            core = cct[reg][3][r][0]
-            uncore = cct[reg][3][r][1]
+            core = cct[reg][4][r][0]
+            uncore = cct[reg][4][r][1]
         if core!=0 and uncore!=0:
             cct[reg][0] = core
             cct[reg][1] = uncore
 
+def __prune_cct(cct):
+    for reg in cct[4].keys():
+        __prune_cct(cct[4][reg])
+        valid=False
+        for i in cct[4][reg][4].keys():
+            valid = (valid or cct[4][reg][4][i][0]!=-1)
+        print(valid)
+        if not valid:
+            if (cct[4][reg][0]==cct[0] or cct[4][reg][0]==0) and (cct[4][reg][1]==cct[1] or cct[4][reg][1]==0) and (cct[4][reg][3]==cct[3] or cct[4][reg][3]==0):
+                cct[4][reg][0]=-1
+
+def optimize_cct(cct):
+    __optimize_cct(cct["ROOT"][4])
+    core=0
+    uncore=0
+    for r in cct["ROOT"][4].keys():
+        if core!=0 and core!=cct["ROOT"][4][r][0]:
+            core = 0
+            break
+        if uncore!=0 and uncore!=cct["ROOT"][4][r][1]:
+            uncore = 0
+            break
+        core = cct["ROOT"][4][r][0]
+        uncore = cct["ROOT"][4][r][1]
+    if core!=0 and uncore!=0:
+        cct["ROOT"][0] = core
+        cct["ROOT"][1] = uncore
+    __prune_cct(cct["ROOT"])
+    print_cct(cct)
+
 def __generate_cct_frequency_commands(f, cct, keyMap, pre=[]):
     for reg in cct.keys():
-        key = len(keyMap.keys())
-        if reg in keyMap.keys():
-            key = keyMap[reg]
-        else:
-            keyMap[reg] = key
-        # # key
-        # f.write(struct.pack("Q", key))
-        # # pruned
-        # f.write(struct.pack("Q", 0))
-        # # data::core
-        # f.write(struct.pack("Q", cct[reg][0]))
-        # # data::uncore
-        # f.write(struct.pack("Q", cct[reg][1]))
-        # # data::thread
-        # f.write(struct.pack("Q", 0))
-        # # number of children
-        # f.write(struct.pack("Q", len(cct[reg][3].keys())))
-        f.write(str(len(pre)+1)+" ")
-        for k in pre:
-            f.write(str(k)+" ")
-        f.write("{0} {1} {2} {3}\n".format(key, make_core(cct[reg][0]), make_uncore(cct[reg][1]), 0))
-        # f.write("{0} {1} {2} {3}\n".format(key, make_core(22), make_uncore(20), 0))
-        # children
-        __generate_cct_frequency_commands(f, cct[reg][3], keyMap, pre+[key])
+        if cct[reg][0]!=-1:
+            key = len(keyMap.keys())
+            if reg in keyMap.keys():
+                key = keyMap[reg]
+            else:
+                keyMap[reg] = key
+            f.write(str(len(pre)+1)+" ")
+            for k in pre:
+                f.write(str(k)+" ")
+            # f.write("{0} {1} {2} {3}\n".format(key, make_core(cct[reg][0]), make_uncore(cct[reg][1]), cct[reg][3]))
+            f.write("{0} {1} {2} {3}\n".format(key, make_core(cct[reg][0]), make_uncore(cct[reg][1]), cct[reg][2]))
+            # children
+            __generate_cct_frequency_commands(f, cct[reg][4], keyMap, pre+[key])
 
 def generate_cct_frequency_commands(cct, name):
     keyMap = {}
     keyMap["ROOT"] = -1
     with open(name+".cct", "w", newline='') as f:
         # generate frequency commands first
-        __generate_cct_frequency_commands(f, cct["ROOT"][3], keyMap)
+        #__generate_cct_frequency_commands(f, cct["ROOT"][4], keyMap)
+        __generate_cct_frequency_commands(f, cct, keyMap)
     # generate frequency command filter for PAETT's compiler plugin
     with open(name+".filt","w", newline='') as f:
         for reg in keyMap.keys():
@@ -415,8 +580,8 @@ def generate_cct_frequency_commands(cct, name):
 
 def print_cct(cct, pre=""):
     for reg in cct.keys():
-        print(pre+"+ ",reg,cct[reg][:-1])
-        print_cct(cct[reg][3], "|  "+pre)
+        print(pre+"+ ",reg,cct[reg][:3])
+        print_cct(cct[reg][4], "|  "+pre)
 
 def parse_cct_to_insert_point(data):
     res = {}
@@ -439,12 +604,23 @@ def parse_cct_to_insert_point(data):
     return res
 
 if __name__=="__main__":
-    BENCH="QBOX/"
+    # BENCH="streamcluster/"
+    #BENCH="QBOX/"
+    BENCH="miniMD/"
     data_src = "./data/"+BENCH
+    #data_src = "./"
     print("Reading Data...")
     data = read_data([data_src])
     print("Filter dirty data...")
-    data = filter_data(data, (22-8+1)*(20-7+1), 20)
+    # cct = parse_data_to_cct(data[data_src], "frequency_command.thread.cct", "frequency_command.thread.filt")
+    # filter_cct(cct, (22-8+1)*(20-7+1), 10)
+    # # print_cct(cct)
+    # getOptFreq4CCT(cct)
+    # print_cct(cct)
+    # print_cct(cct)
+    # optimize_cct(cct)
+    # generate_cct_frequency_commands(cct, data_src+"frequency_command")
+    data = filter_data(data, (22-8+1)*(20-7+1), 10)
     # data = filter_data(data, (20-7+1)+(14-7+1)+1, 20)
     FreqOfMinEnergy = getFreqOfMinEnergy(data[data_src])
     FreqOfMinEnergyRegion, reg2cct = getFreqOfMinEnergyRegion(data[data_src])
@@ -459,23 +635,25 @@ if __name__=="__main__":
                 print("\t",cct, "\n\t  ", FreqOfMinEnergy[cct])
                 tot_energy += FreqOfMinEnergy[cct][2]
             print("\tCCT-based Energy=",tot_energy, "J, Region-based Energy=", FreqOfMinEnergyRegion[reg][2],"J, Saving ", 100*(1-tot_energy/FreqOfMinEnergyRegion[reg][2]), "%")
-    cct = parse_cctString_to_cct(FreqOfMinEnergy)
-    print_cct(cct)
-    optimize_cct(cct)
-    generate_cct_frequency_commands(cct, data_src+"frequency_command")
+    # cct = load_thread_cct(data_src+"PAETT-profile/frequency_command.thread.cct", data_src+"PAETT-profile/frequency_command.thread.filt")
+    # #cct = {}
+    # cct = parse_cctString_to_cct(FreqOfMinEnergy, cct)
+    # print_cct(cct)
+    # optimize_cct(cct)
+    # generate_cct_frequency_commands(cct, data_src+"frequency_command")
     generate_frequency_commands(FreqOfMinEnergyRegion, data_src+"paett_model.cache.region")
-    # generate_frequency_commands(parse_cct_to_insert_point(FreqOfMinEnergy), data_src+"paett_model.cache.cct")
-    # generate heatmap figures for further analysis
-    # regData = getStaticalRegionData(data[data_src])
-    # for reg in regData.keys():
-    #     path = "./figures/"+BENCH+reg.replace("/",";").replace(":","#")
-    #     try:
-    #         os.mkdir(path)
-    #     except FileExistsError:
-    #         pass
-    #     count = 0
-    #     for cct in regData[reg].keys():
-    #         figPath = path + "/" + str(count) + "-"
-    #         draw(regData[reg][cct], c_prec=FreqOfMinEnergyRegion[reg][0], u_prec=FreqOfMinEnergyRegion[reg][1], title=cct, pre=figPath)
-    #         count = count + 1
+    generate_frequency_commands(parse_cct_to_insert_point(FreqOfMinEnergy), data_src+"paett_model.cache.cct")
+    # # generate heatmap figures for further analysis
+    regData = getStaticalRegionData(data[data_src])
+    for reg in regData.keys():
+        path = "./figures/"+BENCH+reg.replace("/",";").replace(":","#")
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            pass
+        count = 0
+        for cct in regData[reg].keys():
+            figPath = path + "/" + str(count) + "-"
+            draw(regData[reg][cct], c_prec=FreqOfMinEnergyRegion[reg][0], u_prec=FreqOfMinEnergyRegion[reg][1], title=cct, pre=figPath)
+            count = count + 1
 

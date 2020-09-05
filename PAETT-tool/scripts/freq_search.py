@@ -1,0 +1,831 @@
+#!python3
+import numpy as np
+import os
+import subprocess
+import shutil
+import sys
+from getopt import getopt
+
+VERBOSE=False
+keyMap =None
+
+class Configuration:
+    def __init__(self):
+        self.read_config()
+
+    def read_config(self):
+        self.config = {}
+        with open(os.environ['ROOT_POWERSPECTOR_TOOL']+'/include/config.h', "r") as f:
+            for line in f:
+                if "#define" in line:
+                    cont = line.split(' ')
+                    if len(cont) == 3:
+                        if '.' in cont[2]:
+                            self.config[cont[1].strip()] = float(cont[2].strip())
+                        else:
+                            self.config[cont[1].strip()] = int(cont[2].strip())
+        # checking necessary info
+        for d in ['MAX_CORE_FREQ', 'MAX_UNCORE_FREQ', 'MIN_CORE_FREQ', 'MIN_UNCORE_FREQ']:
+            if d not in self.config.keys():
+                print(d+' is not defined in ../include/config.h file!')
+                exit(1)
+        self.printRange()
+    
+    def printRange(self):
+        print("[Info] Core: {0}~{1}, Uncore: {2}~{3}".format(self.get_min_core(), self.get_max_core(), self.get_min_uncore(), self.get_max_uncore()))
+
+    def get_max_core(self):
+        return self.config['MAX_CORE_FREQ']
+
+    def get_min_core(self):
+        return self.config['MIN_CORE_FREQ']
+
+    def get_max_uncore(self):
+        return self.config['MAX_UNCORE_FREQ']
+
+    def get_min_uncore(self):
+        return self.config['MIN_UNCORE_FREQ']
+
+# global configurations
+config = Configuration()
+
+def make_core(core):
+    if core==0:
+        return 0
+    if core<config.get_min_core():
+        core = config.get_min_core()
+    if core>config.get_max_core():
+        core = config.get_max_core()
+    return core*100000
+
+def make_uncore(uncore):
+    if uncore==0:
+        return 0
+    if uncore<config.get_min_uncore():
+        uncore = config.get_min_uncore()
+    if uncore>20:
+        uncore = config.get_max_uncore()
+    return uncore*256+uncore
+
+class MetricData:
+    def __init__(self):
+        total_num = (config.get_max_core()-config.get_min_core()+1)*(config.get_max_uncore()-config.get_min_uncore()+1)
+        self.data = [ 1000000000 for i in range(0, total_num) ]
+        self.energy = {}
+    
+    def _make_index(self, core, uncore):
+        return (core-config.get_min_core())*(config.get_max_uncore()-config.get_min_uncore()+1) + (uncore-config.get_min_uncore())
+
+    def _decode_index(self, index):
+        return int(index / (config.get_max_uncore()-config.get_min_uncore()+1)) + config.get_min_core(), index % (config.get_max_uncore()-config.get_min_uncore()+1) + config.get_min_uncore()
+
+    def fill(self, core, uncore, energy):
+        if core!=0 and uncore!=0: 
+            self.data[self._make_index(core, uncore)] = energy
+            self.energy["{0} {1}".format(core, uncore)] = energy
+    
+    def add(self, core, uncore, energy):
+        if core!=0 and uncore!=0: 
+            key = "{0} {1}".format(core, uncore)
+            if key not in self.energy.keys():
+                self.energy[key] = energy
+                self.data[self._make_index(core, uncore)] = energy
+            else:
+                self.energy[key]+= energy
+                self.data[self._make_index(core, uncore)]+= energy
+
+    def get(self, core, uncore):
+        key = "{0} {1}".format(core, uncore)
+        if key not in self.energy.keys():
+            return 0
+        return self.energy[key]
+
+    def getMinFreq(self):
+        assert(len(self.energy.keys())>0)
+        return self._decode_index(np.argmin(self.data))
+
+    def size(self):
+        return len(self.energy.keys())
+
+    def is_valid(self, core, uncore):
+        if core<config.get_min_core() or core>config.get_max_core() or uncore<config.get_min_uncore() or uncore>config.get_max_uncore():
+            return False
+        return True
+    
+    def is_filled(self, core, uncore):
+        return ("{0} {1}".format(core, uncore) in self.energy.keys())
+
+    def save(self, file):
+        for k in self.energy.keys():
+            file.write("{0} {1} ".format(k, self.energy[k]))
+
+def get_energy(node):
+    return  node.metric.get(node.core, node.uncore)
+
+class CallingContextTree:
+    def __init__(self, name="ROOT", parent=None):
+        self.name = name
+        self.core  = 0
+        self.uncore= 0
+        self.thread= 0
+        self.tuning= True
+        self.parent= parent
+        self.pruned= False
+        self.lock  = False
+        self.metric= MetricData() 
+        self.child = {}
+        self.__candidates = []
+        self._core_min = 0
+        self._uncore_min = 0
+        self._thread_min = 0
+        self._energy_min = None
+        self._exclude = []
+        self.grandTruth = None
+        self.__similiar_candidates = []
+        self.__core_step = 2
+        self.__uncore_step = 2
+        # this is reserved for any additional message stored in a node
+        self.additional = None
+
+    def update_if_min(self, energy):
+        # # update by application's energy
+        # if (self._energy_min is None) or self._energy_min > energy:
+        #     if VERBOSE and (self._core_min!=self.core or self._uncore_min!=self.uncore or self._thread_min!=self.thread):
+        #         print("-- Update: {0} {1} {2} {3} => {4} {5} {6}".format(self.name, self._core_min, self._uncore_min, self._thread_min, self.core, self.uncore, self.thread))
+        #     self._core_min = self.core
+        #     self._uncore_min = self.uncore
+        #     self._thread_min = self.thread
+        #     self._energy_min = energy
+        # update by region-level energy
+        # print(self.metric.get(self.core, self.uncore), self.metric.get(self._core_min, self._uncore_min))
+        if (self._energy_min is None) or self.metric.get(self.core, self.uncore) < self.metric.get(self._core_min, self._uncore_min):
+            if VERBOSE and (self._core_min!=self.core or self._uncore_min!=self.uncore or self._thread_min!=self.thread):
+                print("-- Update: {0} {1} {2} {3} => {4} {5} {6}".format(self.name, self._core_min, self._uncore_min, self._thread_min, self.core, self.uncore, self.thread))
+            self._core_min = self.core
+            self._uncore_min = self.uncore
+            self._thread_min = self.thread
+            self._energy_min = energy
+        # similiar regions
+        # if (self._energy_min is not None) and self.tuning and self._energy_min!=energy:
+        #     e  = self.metric.get(self.core, self.uncore)
+        #     em = self.metric.get(self._core_min, self._uncore_min)
+        #     if (e-em)/em < 0.02:
+        #         self.__similiar_candidates.append( (self.core, self.uncore) )
+        #         print("-- Region {0}: Adding {1} {2} into similiar minimum")
+        for r in self.child.keys():
+            self.child[r].update_if_min(energy)
+    
+    def getOrInsertChild(self, key):
+        if key not in self.child.keys():
+            self.child[key] = CallingContextTree(key, self)
+        return self.child[key]
+
+    def fillMetric(self, core, uncore, energy, method="add"):
+        assert(core!=0 and uncore!=0)
+        if self.lock and (self.parent is not None):
+            self.parent.fillMetric(core, uncore, energy, method)
+            return
+        if self.metric is None:
+            self.metric = MetricData()
+        if method=="add":
+            self.metric.add(core, uncore, energy)
+        elif method=="fill":
+            self.metric.fill(core, uncore, energy)
+        else:
+            assert(False)
+        if VERBOSE:
+            print("\t{0} Fill Metric {1} {2} {3}, Size={4}".format(self.name, core, uncore, energy, self.metric.size()))
+
+    def find(self, path):
+        if path[-1]!=self.name:
+            return None
+        if len(path)==1 or (path[-2] not in self.child.keys()):
+            return self
+        return self.child[path[-2]].find(path[:-1])
+
+    def add_candidate(self, coff, ucoff):
+        if self.tuning and self.metric.is_valid(self.core+coff, self.uncore+ucoff):
+            self.__candidates.append( (self.core+coff, self.uncore+ucoff) )
+        for r in self.child.keys():
+            self.child[r].add_candidate(coff,ucoff)
+
+    def step(self):
+        if self.tuning and self._energy_min is not None:
+            self.core   = self._core_min
+            self.uncore = self._uncore_min
+            print("Region {0}: change to {1} {2}".format(self.name, self.core, self.uncore))
+        elif self.tuning and self.metric is not None:
+            if self.metric.size()>0:
+                if VERBOSE:
+                    print(self.name, self.core, self.uncore, self.thread, end=' => ')
+                self.core, self.uncore = self.metric.getMinFreq()
+                if VERBOSE:
+                    print(self.core, self.uncore, self.thread)
+            else:
+                self.tuning = False
+        for r in self.child.keys():
+            self.child[r].step()
+
+    def next_candidate(self):
+        changed = False
+        if len(self.__candidates)>0:
+            self.core, self.uncore = self.__candidates.pop()
+            if VERBOSE:
+                print("-- Region {0}: Trying {1} {2}".format(self.name, self.core, self.uncore))
+            changed = True
+        for r in self.child.keys():
+            # only one at a time
+            # changed = changed or (self.child[r].next_candidate())
+            changed = (self.child[r].next_candidate()) or changed
+        return changed
+
+    # ###
+    # #O#
+    # ###
+    def get_candidate_9cell(self):
+        self.__candidates = []
+        for c in [self.core-1, self.core, self.core+1]:
+            for uc in [self.uncore-1, self.uncore, self.uncore+1]:
+                if (self.metric is not None) and self.metric.is_valid(c, uc):
+                    if not self.metric.is_filled(c, uc):
+                        # print(c, uc, self.core, self.uncore)
+                        self.__candidates.append( (c,uc) )
+        while len(self.__similiar_candidates) > 0:
+            core, uncore = self.__similiar_candidates.pop()
+            for c in [core-1, core, core+1]:
+                for uc in [uncore-1, uncore, uncore+1]:
+                    if (self.metric is not None) and self.metric.is_valid(c, uc):
+                        if not self.metric.is_filled(c, uc) and ((c,uc) not in self.__candidates):
+                            self.__candidates.append( (c,uc) )
+        print("-- Region {0}: Candidate core/uncore comb: ".format(self.name), self.__candidates)
+        return len(self.__candidates)>0
+    #       #
+    #      ###
+    #     ##O##
+    #      ###
+    #       #
+    def get_candidate_13cell(self):
+        self.__candidates = []
+        for c in range(self.core-2, self.core+2+1):
+            if (self.metric is not None) and self.metric.is_valid(c, self.uncore):
+                if not self.metric.is_filled(c, self.uncore):
+                    # print(c, uc, self.core, self.uncore)
+                    self.__candidates.append( (c,self.uncore) )
+        for uc in range(self.uncore-2, self.uncore+2+1):
+            if (self.metric is not None) and self.metric.is_valid(self.core, uc):
+                if not self.metric.is_filled(self.core, uc):
+                    # print(c, uc, self.core, self.uncore)
+                    self.__candidates.append( (self.core,uc) )
+        for i in [-1, 1]:
+            for j in [-1, 1]:
+                c = self.core+i
+                uc= self.uncore+j
+                if (self.metric is not None) and self.metric.is_valid(c, uc):
+                    if not self.metric.is_filled(c, uc):
+                        self.__candidates.append( (c,uc) )
+        print("-- Region {0}: Candidate core/uncore comb: ".format(self.name), self.__candidates)
+        return len(self.__candidates)>0
+
+    def get_candidate(self):
+        self.__candidates = []
+        while len(self.__candidates)==0 and self.__core_step>=0 and self.__uncore_step>0:
+            if self.__core_step >= self.__uncore_step:
+                uc = self.uncore
+                for c in range(self.core-self.__core_step, self.core+self.__core_step+1):
+                    if (self.metric is not None) and self.metric.is_valid(c, uc):
+                        if not self.metric.is_filled(c, uc):
+                            self.__candidates.append( (c,uc) )
+                if len(self.__candidates)==0:
+                    self.__core_step -= 1
+            else:
+                c = self.core
+                for uc in range(self.uncore-self.__uncore_step, self.uncore+self.__uncore_step+1):
+                    if (self.metric is not None) and self.metric.is_valid(c, uc):
+                        if not self.metric.is_filled(c, uc):
+                            self.__candidates.append( (c,uc) )
+                if len(self.__candidates)==0:
+                    self.__uncore_step -= 1
+        print("-- Region {0}: Candidate core/uncore comb: ".format(self.name), self.__candidates)
+        return len(self.__candidates)>0
+
+    def get_tuningNodeList(self):
+        res = []
+        if self.tuning:
+            res.append(self)
+        for r in self.child.keys():
+            res += self.child[r].get_tuningNodeList()
+        return res
+
+    def get_tuningNodeListInEnergyOrder(self):
+        res = self.get_tuningNodeList()
+        res.sort(key=get_energy)
+        return res
+
+    def get_max_energy_node(self, tot_energy, exclude):
+        me = 99999999
+        res= None
+        if self.tuning and self not in exclude:
+            me = self.metric.get(self.core, self.uncore) / tot_energy
+            res= self
+        for r in self.child.keys():
+            node, ce = self.child[r].get_max_energy_node(tot_energy, exclude)
+            if (node is not None) and node.tuning and (me >= ce):
+                me = ce
+                res = node
+        if res is not None:
+            print(self.name, res.name, me)
+        else:
+            print(self.name, res, me)
+        return res, me
+
+    def prepare_candidates_only_max(self, tot_energy):
+        node, energy = self.get_max_energy_node(tot_energy, self._exclude)
+        if node is None:
+            return False
+        node.get_candidate()
+        node.tuing = (len(self.__candidates)>0)
+        while not node.tuning:
+            print("\tTurn off tuning of {0} as it has converged: {1} {2} {3}".format(node.name, node.core, node.uncore, node.thread))
+            self._exclude.append(node)
+            node, energy = self.get_max_energy_node(tot_energy, self._exclude)
+            if node is None:
+                return False
+            node.get_candidate()
+            node.tuing = (len(node.__candidates)>0)
+        return True
+
+    # return [(core, uncore)]
+    def prepare_candidates(self):
+        print("-- ", self.name, self.tuning)
+        if self.tuning:
+            self.get_candidate()
+            self.tuning = (len(self.__candidates)!=0)
+            if not self.tuning:
+                print("\tTurn off tuning of {0} as it has converged: {1} {2} {3}".format(self.name, self.core, self.uncore, self.thread))
+        hasCandidates=self.tuning
+        for r in self.child.keys():
+            # flag = self.child[r].prepare_candidates()
+            # hasCandidates = flag or hasCandidates
+            hasCandidates = hasCandidates or self.child[r].prepare_candidates()
+        # print(self.name, hasCandidates, self.__candidates)
+        return hasCandidates
+
+    def save(self, file):
+        file.write("{0} {1} {2} {3} ".format(self.name, self.core, self.uncore, self.thread))
+        self.metric.save(file)
+        file.write("{0}\n".format(len(self.child.keys())))
+        for r in self.child.keys():
+            self.child[r].save(file)
+    
+    def __saveTo(self, file, pre=[]):
+        if self.core!=-1 and (not self.pruned):
+            key = self.name
+            for k in pre:
+                file.write(str(k)+";")
+            file.write("{0};{1} {2} {3}\n".format(key, self.core, self.uncore, self.thread))
+            for r in self.child.keys():
+                self.child[r].__saveTo(file, pre+[key])
+
+    def saveTo(self, file_name):
+        with open(file_name, "w", newline="") as file:
+            self.__saveTo(file)
+
+    def loadFrom(self, file_name):
+        with open(file_name, "r") as f:
+            for line in f:
+                cont = line.split(";")
+                keys = cont[:-1]
+                vals = cont[-1].split(" ")
+                p = self
+                for k in keys:
+                    p = p.getOrInsertChild(k)
+                p.core = vals[0]
+                p.uncore = vals[1]
+                p.thread = vals[2]
+
+    def generate_frequency_commands(self, file, keyMap, pre=[]):
+        if self.core!=-1 and (not self.pruned):
+            # key = len(keyMap.keys())
+            # if self.name in keyMap.keys():
+            #     key = keyMap[self.name]
+            # else:
+            #     keyMap[self.name] = key
+            key = keyMap[self.name]
+            file.write(str(len(pre)+1)+" ")
+            for k in pre:
+                file.write(str(k)+" ")
+            file.write("{0} {1} {2} {3}\n".format(key, make_core(self.core), make_uncore(self.uncore), self.thread))
+            for r in self.child.keys():
+                self.child[r].generate_frequency_commands(file, keyMap, pre+[key])
+
+    def __str__(self):
+        return self.name
+
+    def print(self, pre=""):
+        if self.pruned:
+            print(pre+"+ ", self.name, (self.core, self.uncore, self.thread), "[pruned]" )
+        else:
+            print(pre+"+ ", self.name, (self.core, self.uncore, self.thread) )
+        for r in self.child.keys():
+            self.child[r].print(pre+"|   ")
+
+    def optimize(self, lock=False):
+        may_prune = True
+        for r in self.child.keys():
+            may_prune = self.child[r].optimize(lock) and may_prune
+        if may_prune:
+            if self.parent is not None:
+                may_prune = ((self.core==self.parent.core) and (self.uncore==self.parent.uncore) and (self.thread==self.parent.thread))
+                # print(self.name, (self.core, self.uncore, self.thread), self.parent.name, (self.parent.core, self.parent.uncore, self.parent.thread), may_prune )
+            may_prune = may_prune or (self.core<=0 and self.uncore<=0 and self.thread<=0)
+        self.pruned = may_prune
+        if lock and self.pruned:
+            self.lock = True
+            self.tuning = False
+        return self.pruned
+
+    def recover(self):
+        if not self.lock:
+            self.pruned = False
+        for r in self.child.keys():
+            self.child[r].recover()
+
+    def check(self, tot_energy, threshold=0.01):
+        if self.metric.get(self.core, self.uncore) / tot_energy < threshold:
+            if VERBOSE and self.tuning:
+                print("\tTurn off tuning of {0} as it has too small energy consomption: {1} {2} {3} ({4} %)".format(self.name, self.core, self.uncore, self.metric.get(self.core, self.uncore), 100 * self.metric.get(self.core, self.uncore) / tot_energy))
+            self.tuning = False
+        for r in self.child.keys():
+            self.child[r].check(tot_energy)
+
+    def standardize(self):
+        if self.core==0:
+            self.tuning = False
+            if self.parent is not None:
+                self.core = self.parent.core
+            else:
+                self.core = 22 # max
+        if self.uncore==0:
+            self.tuning = False
+            if self.parent is not None:
+                self.uncore = self.parent.uncore
+            else:
+                self.uncore = 20 # max
+        if self.thread==0:
+            self.tuning = False
+            if self.parent is not None:
+                self.thread = self.parent.thread
+            else:
+                self.thread = 20 # max
+        for r in self.child.keys():
+            self.child[r].standardize()
+
+def load_thread_cct_freqcommand(cct_fn, keymap_fn):
+    keymap = {}
+    with open(keymap_fn, "r") as f:
+        for line in f:
+            cont = line.split(" ")
+            keymap[cont[0]] = " ".join(cont[1:])[:-1]
+    cct = CallingContextTree()
+    with open(cct_fn, "r") as f:
+        for line in f:
+            cont = line.split(" ")
+            n = int(cont[0])
+            p = cct
+            for i in range(0, n):
+                reg = keymap[cont[i+1]]
+                p.name = reg
+                if i==n-1:
+                    p.core = int(int(cont[n+1])/100000) # core
+                    p.uncore = int(cont[n+2])&0xff # uncore
+                    p.thread = int(cont[n+3]) # thread
+                else:
+                    p = p.getOrInsertChild(keymap[cont[i+2]])
+    # standarize cct
+    if VERBOSE:
+        cct.print()
+    cct.standardize()
+    cct.optimize(lock=True)
+    if VERBOSE:
+        print("---------------")
+        cct.print()
+        print("---------------")
+    return cct
+
+def load_thread_cct(cct_fn):
+    cct = CallingContextTree()
+    cct.loadFrom(cct_fn)
+    # standarize cct
+    if VERBOSE:
+        cct.print()
+    cct.standardize()
+    cct.optimize(lock=True)
+    if VERBOSE:
+        print("---------------")
+        cct.print()
+        print("---------------")
+    return cct
+
+def load_cct_from_metrics(cct, metric_fn, thread=0, core=0, uncore=0):
+    if cct is None:
+        cct = CallingContextTree()
+    with open(metric_fn,"r") as f:
+            for line in f:
+                cont = line.split(' ')
+                if len(cont)==0:
+                    continue
+                record = []
+                cont = line.split(';')
+                key = cont[0]
+                cont = cont[1].split(' ')
+                for s in cont:
+                    record.append(float(s))
+                metric = record[:-1]
+                energy = record[-1]
+                # split to regions, and ignore the last two (ROOT, empty)
+                keys = key.split('=>')[:-2]
+                keys.reverse()
+                p = cct
+                for k in keys:
+                    p = p.getOrInsertChild(k)
+                if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
+                    p.additional = (metric, energy)
+                    p.thread = thread
+    return cct
+
+def generate_cct_frequency_commands(cct, name):
+    cct.optimize() # optimize CCT to generate optimized commands
+    if VERBOSE:
+        print("------------ GENERATED CCT TO {0} -----------".format(name+".cct"))
+        cct.print()
+        print("---------------------------------------------")
+    with open(name+".cct", "w", newline='') as f:
+        cct.generate_frequency_commands(f, keyMap)
+    cct.recover() # recover CCT as optimized commands may also can be fine tuned later
+
+def load_keyMap(fn):
+    keyMap = {"ROOT":-1}
+    with open(fn, "r") as f:
+        for line in f:
+            cont = line[:-1].split(" ")
+            key = int(cont[0])
+            name= " ".join(cont[1:])
+            keyMap[name] = key
+    return keyMap
+
+# run and log energy metrics
+def exec_once(exe, cct, keymap_fn, update=True):
+    res_fn = "metric.dat.search"
+    tmp_cct_fn = "frequency_command.tmp"
+    generate_cct_frequency_commands(cct, tmp_cct_fn)
+    os.environ['PAETT_CCT_FREQUENCY_COMMAND_FILE'] = tmp_cct_fn
+    exe += " > paett-run.log"
+    if VERBOSE:
+        print("-- Running: ", exe)
+    subprocess.check_call(exe, shell=True)
+    cmd = "freq_set {0} {1}".format(str(config.get_max_core()), str(config.get_max_uncore()))
+    subprocess.check_call(cmd, shell=True)
+    subprocess.check_call("sleep 1", shell=True)
+    subprocess.check_call("rm -rf "+res_fn, shell=True)
+    if keymap_fn is not None:
+        cmd = "filter_significant_profile --keymap_fn "+keymap_fn + " > " + res_fn
+    else:
+        cmd = "filter_significant_profile > " + res_fn
+    subprocess.check_call(cmd, shell=True)
+    tot_energy = 0.0
+    # now read the profile and fill in energy info
+    with open(res_fn, "r") as f:
+        for line in f:
+            record = []
+            cont = line.split(';')
+            key = cont[0]
+            cont = cont[1].split(' ')
+            for s in cont:
+                record.append(float(s))
+            energy = record[-1]
+            path = key.split("=>")[:-1]
+            node = cct.find(path)
+            assert(node is not None)
+            # print(key, path, node.name)
+            node.fillMetric(node.core, node.uncore, energy)
+            tot_energy += energy
+    print("\n-- Total Energy Consumption: ", tot_energy, " J")
+    cct.check(tot_energy)
+    if update:
+        cct.update_if_min(tot_energy)
+    return tot_energy
+
+# update cct's core/uncore value and give the next step
+def hill_climbing(exe, cct, keymap_fn, max_iter=5, max_cct_num=5):
+    i = 1
+    energy = exec_once(exe, cct, keymap_fn)
+    # tuning list: [small_energy_node, ..., large_energy_node]
+    nodeList = cct.get_tuningNodeListInEnergyOrder()
+    try:
+        cn = 1
+        print("-- INFO: {0} regions needed to be tuned".format(len(nodeList)))
+        while True:
+            if max_cct_num>0 and cn > max_cct_num:
+                print("-- INFO: Max number of cct reached.")
+                break
+            if len(nodeList) == 0:
+                print("-- INFO: All CCTs are converged.")
+                break
+            i = 1
+            print("-- INFO: ", nodeList)
+            node = nodeList.pop() # get cct node with the largest energy consumption in the list
+            print("-- Region {0}: {1} {2} {3}".format(node.name, node.core, node.uncore, get_energy(node)))
+            while node.get_candidate():
+                if max_iter>0 and i>max_iter:
+                    print("-- INFO: Max iteration count reached.")
+                    break
+                print("-- Region {0}: Iter: {1} / {2}".format(node.name, i, max_iter))
+                while cct.next_candidate():
+                    E = exec_once(exe, cct, keymap_fn)
+                    energy = min([E, energy])
+                cct.step()
+                print("-- INFO: Minimal Energy consumption: {0}".format(energy))
+                cct.print()
+                generate_cct_frequency_commands(cct, "hill_climbing."+str(cn)+"."+str(i))
+        # while True:
+        #     if max_iter>0 and i > max_iter:
+        #         print("-- INFO: Max iteration count reached.")
+        #         break
+        #     print("-- Iter: {0} / {1}".format(i, max_iter))
+        #     node = nodeList.pop()
+        #     while len(nodeList) > 0 and (not node.get_candidate()):
+        #         node = nodeList.pop()
+        #     #if not cct.prepare_candidates():
+        #     #if not cct.prepare_candidates_only_max(energy):
+        #     if len(nodeList) == 0:
+        #         # converged, early stop
+        #         print("-- INFO: Converged")
+        #         break
+        #     while(cct.next_candidate()):
+        #         E = exec_once(exe, cct, keymap_fn)
+        #         energy = min([E, energy])
+        #     cct.step()
+        #     with open("cct.tmp."+str(i),"w") as f:
+        #         cct.save(f)
+        #     cct.print()
+        #     generate_cct_frequency_commands(cct, "hill_climbing.cct."+str(i))
+        #     i = i + 1
+    except KeyboardInterrupt:
+        print("-- Warning: keyboardinterrupt detected. Store current resolutions.")
+        with open("hill_climbing.cct.tmp","w") as f:
+            cct.save(f)
+        cct.print()
+        generate_cct_frequency_commands(cct, "hill_climbing.cct")
+        sys.exit(1)
+
+def grid_search(exe, cct, keymap_fn, grid_size=2):
+    cct.add_candidate(0, 0)
+    for c in range(-grid_size, grid_size+1):
+        for uc in range(-grid_size, grid_size+1):
+            if c!=0 or uc!=0:
+                cct.add_candidate(c, uc)
+    checkpoint = 0
+    while(cct.next_candidate()):
+        checkpoint += 1
+        exec_once(exe, cct, keymap_fn)
+        if checkpoint % 10 == 0:
+            with open("grid_search.tmp."+str(checkpoint), "w") as f:
+                cct.save(f)
+    with open("grid_search.cct","w") as f:
+        cct.save(f)
+    cct.step()
+    cct.print()
+
+# execute *exe* with *tnum* threads
+# the number of threads will be sent as the last argument of *exe*
+# and OMP_NUM_THREADS will automatically set to the tnum
+def thread_exec(exe, tnum, keymap_fn, out_dir='./', no_papi=True):
+    res_fn = out_dir+"metric.dat.thread." + str(tnum)
+    os.environ['OMP_NUM_THREADS'] = str(tnum)
+    # if PAPI profiling is not needed, we just disable this
+    if no_papi:
+        os.environ['PAETT_DETECT_MODE'] = 'ENABLE'
+    exe += " > paett-run.log."+str(tnum)
+    if VERBOSE:
+        print("-- Running: ", exe)
+    subprocess.check_call("{0} {1}".format(exe, str(tnum)), shell=True)
+    cmd = "freq_set {0} {1}".format(str(config.get_max_core()), str(config.get_max_uncore()))
+    subprocess.check_call(cmd, shell=True)
+    subprocess.check_call("sleep 1", shell=True)
+    subprocess.check_call("rm -rf "+res_fn, shell=True)
+    if keymap_fn is not None:
+        cmd = "filter_significant_profile --keymap_fn "+keymap_fn + " > " + res_fn
+    else:
+        cmd = "filter_significant_profile > " + res_fn
+    subprocess.check_call(cmd, shell=True)
+    return res_fn
+
+# [start, end], with step size *step*
+def thread_search(exe, keymap_fn, start, end, step, thread_res_fn="thread.cct"):
+    cct = None
+    # temporary metric output files
+    out_dir = 'thread_metrics/'
+    if os.path.exists(out_dir):
+        shutil.rmtree(out_dir)
+    os.mkdir(out_dir)
+    # add single thread execution as baseline
+    print("Running with 1 Thread")
+    if start>1:
+        res_fn = thread_exec(exe, 1, keymap_fn, out_dir)
+        cct = load_cct_from_metrics(cct, res_fn, 1)
+    for i in range(start, end+1, step):
+        print("Running with {0} Thread".format(i))
+        res_fn = thread_exec(exe, i, keymap_fn, out_dir)
+        cct = load_cct_from_metrics(cct, res_fn, i)
+    if thread_res_fn is not None:
+        print("Save thread optimized cct to ", thread_res_fn)
+        cct.saveTo(thread_res_fn)
+        # with open(thread_res_fn, "w", newline='') as f:
+        #     cct.generate_frequency_commands(f, keyMap)
+    return cct
+
+def usage():
+    return
+
+if __name__=="__main__":
+    keymap_fn = "PAETT.keymap.0"
+    cct_src = ""
+    exe = "./run.sh"
+    out_fn = "frequency_command.hillclimb"
+    use_hill = False
+    use_grid = False
+    grid_size = 2
+    max_iter = -1
+    read_only= False
+    thread_only = False
+    thread_begin = 2
+    thread_end = 28
+    thread_step = 2
+    use_thread_search = True
+    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "keymap=","cct-src=","output=", "run", "hill-climbing", "grid-search", "grid-size=", "max-iter", "read-only", "thread-only", "tbegin", "tend", "tstep"])
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage()
+            sys.exit(1)
+        if opt=="-v":
+            VERBOSE=True
+        elif opt in ("-k", "--keymap"):
+            keymap_fn = arg
+        elif opt in ("-c", "--cct-src"):
+            cct_src = arg
+            use_thread_search = False
+        elif opt in ("-o", "--output"):
+            out_fn = arg
+        elif opt in ("-r", "--run"):
+            exe = arg
+        elif opt == "--grid-search":
+            use_grid = True
+        elif opt == "--hill-climbing":
+            use_hill = True
+        elif opt == "--grid-size":
+            grid_size = int(arg)
+        elif opt == "--max-iter":
+            max_iter = int(arg)
+        elif opt == "--read-only":
+            read_only= True
+        elif opt == "--thread-only":
+            thread_only = True
+        elif opt == "--tbegin":
+            thread_begin = int(arg)
+        elif opt == "--tend":
+            thread_end = int(arg)
+        elif opt == "--tstep":
+            thread_step = int(arg)
+        else:
+            print("Error: Unknown option: ", opt)
+            usage()
+            sys.exit(1)
+    if use_thread_search:
+        print("[Info] Thread Search Enabled")
+    if not (thread_only or use_hill or use_grid):
+        use_hill = True
+    if use_hill and use_grid:
+        print("Error: --hill-climbing and --grid-search could not use simultaneously!")
+        sys.exit(1)
+    if use_hill:
+        print("[Info] Use hillclimbing")
+    else:
+        print("[Info] Use Grid searching")
+    keyMap = load_keyMap(keymap_fn)
+    if use_thread_search:
+        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step)
+    else:
+        if thread_only:
+            print("Thread search will not be applied as thread info has already given: ", cct_src)
+            print("[Info] Generate thread cct frequency command without any searching.")
+        # cct = load_thread_cct_freqcommand(cct_src, keymap_fn)
+        cct = load_thread_cct(cct_src)
+    if read_only:
+        cct.optimize()
+        cct.print()
+    else:
+        if use_hill:
+            hill_climbing(exe, cct, keymap_fn, max_iter)
+        if use_grid:
+            grid_search(exe, cct, keymap_fn, grid_size)
+        generate_cct_frequency_commands(cct, out_fn)

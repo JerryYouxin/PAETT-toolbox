@@ -10,6 +10,7 @@
 #include <iostream>
 
 #define PREALLOCATE_CCT
+#define LOCAL_SEARCH
 
 #include "common.h"
 // actually, this indicates main function (entry function of a program)
@@ -28,8 +29,12 @@ struct CallingContextTree {
     CallingContextTree<Data_t>* parent;
     ChildList children;
     bool pruned;
+#ifdef LOCAL_SEARCH
+    int last_loc;
+#endif
 #ifdef PREALLOCATE_CCT
-    #define CCT_PREALLOCATE_SIZE (1L<<20)
+    //#define CCT_PREALLOCATE_SIZE (1L<<20)
+    #define CCT_PREALLOCATE_SIZE (1L<<10)
     static CallingContextTree<Data_t>* get() {
         static int psize = 0;
         static CallingContextTree<Data_t> pnodes[CCT_PREALLOCATE_SIZE];
@@ -80,8 +85,20 @@ struct CallingContextTree {
         auto ic=children.end();
         assert(children.size()>=0);
         if(children.size()>0) {
+#ifdef LOCAL_SEARCH
+            int i = last_loc;
+            do {
+                if(children[i].first==key) {
+                    last_loc = i;
+                    return children[i].second;
+                }
+                i = (i+1) % children.size();
+            } while(i!=last_loc);
+            last_loc = children.size();
+#else
             ic = children.begin();
             while(ic!=children.end() && ic->first!=key) ++ic;
+#endif
         }
 #else
         auto ic = children.find(key);
@@ -197,9 +214,19 @@ struct CallingContextTree {
     }
     ~CallingContextTree() { clear(); }
 #ifdef PREALLOCATE_CCT
-    CallingContextTree() { pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); children.reserve(16); }
+    CallingContextTree() { 
+        pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); children.reserve(16); 
+#ifdef LOCAL_SEARCH
+        last_loc=0;
+#endif    
+    }
 #else
-    CallingContextTree() { pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); }
+    CallingContextTree() { 
+        pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); 
+#ifdef LOCAL_SEARCH
+        last_loc=0;
+#endif    
+    }
 #endif
     static void fprint(FILE* fp, CallingContextTree<Data_t>* root) {
         const uint64_t ONE = 1;

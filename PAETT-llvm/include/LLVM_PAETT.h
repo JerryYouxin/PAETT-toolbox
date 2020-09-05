@@ -3,7 +3,7 @@
 namespace llvm {
 
 Pass* createInstByPerfPass();
-Pass* createFreqModPass(std::string PAETTFreqCommFn);
+Pass* createFreqModPass(std::string PAETTFreqCommFn="paett_model.cache");
 void initializeInstrmentByPerfPassPass(PassRegistry &Registry);
 void initializeFreqModPassPass(PassRegistry &Registry);
 

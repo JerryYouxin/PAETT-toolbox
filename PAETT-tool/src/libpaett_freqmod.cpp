@@ -7,6 +7,16 @@
 
 #include <omp.h>
 
+#ifdef USE_CPU_BIND
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#include <sched.h>
+#undef _GNU_SOURCE
+#else
+#include <sched.h>
+#endif
+#endif
+
 //#define MEASURE_OVERHEAD
 
 #define SUCCESS 0
@@ -36,6 +46,16 @@ static int last_uncore;
 #else
 #define MAKE_PSTATE_FROM_FREQ(x) ((x)/100000LL)
 #define MAKE_FREQ_FROM_PSTATE(x) ((x)*100000LL)
+#endif
+
+#ifdef USE_CPU_BIND
+#include "config.h"
+static int cpu_per_die = 0;
+static int active_dies = 0;
+// mask per die
+static cpu_set_t* mask;
+static int last_active_die;
+static int min_pstate = MAKE_PSTATE_FROM_FREQ(MIN_CORE_FREQ*100000LL);
 #endif
 
 //#define USE_DYNAMIC_TUNING
@@ -154,6 +174,23 @@ void PAETT_init() {
         dieList[i] = x86_adapt_get_device(X86_ADAPT_DIE, i);
         CHECK_VALID_FD(dieList[i], "x86_adapt_get_device for DIE failed");
     }
+#ifdef USE_CPU_BIND
+    // assume each die has the same number of cpus
+    assert(ncpu % ndie==0);
+    cpu_per_die = ncpu / ndie;
+    active_dies = 1; // by default, the entry of main function is always in serial
+    last_active_die = 0;
+    // prepare for mask of CPU binding
+    mask = (cpu_set_t*)malloc(sizeof(cpu_set_t)*ndie);
+    for(i=0;i<ndie;++i) {
+        CPU_ZERO(&mask[i]);
+        int c;
+        int e=i*cpu_per_die+cpu_per_die;
+        for(c=0;c<e;++c) {
+            CPU_SET(c, &mask[i]);
+        }
+    }
+#endif
     last_core = 0;
     last_uncore = 0;
     initialized = 1;
@@ -279,6 +316,95 @@ void PAETT_modUncoreFreqAll(uint64_t uncoreFreq) {
     __request_new_uncore_freq(uncoreFreq);
 }
 #else
+#ifdef USE_CPU_BIND
+void PAETT_modFreqAll(uint64_t coreFreq, uint64_t uncoreFreq) {
+    if(!initialized) return;
+    if(omp_in_parallel()) return;
+    int i;
+    if(coreFreq && (last_core!=coreFreq || last_active_die!=active_dies)) {
+        uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
+        for (i=0;i<active_dies*cpu_per_die;++i) {
+            int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
+            if (ret!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+            }
+        }
+        for (i=active_dies*cpu_per_die;i<ncpu;++i) {
+            int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, min_pstate);
+            if (ret!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+            }
+        }
+        last_core = coreFreq;
+        last_active_die = active_dies;
+    }
+    if(uncoreFreq && (last_uncore!=uncoreFreq || last_active_die!=active_dies)) {
+        uint64_t uncore = uncoreFreq&0xff;
+        for (i=0;i<active_dies;++i) {
+            int ret1 = x86_adapt_set_setting(dieList[i], x86_uncore_min_index, uncore);
+            int ret2 = x86_adapt_set_setting(dieList[i], x86_uncore_max_index, uncore);
+            if (ret1!=8 || ret2!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting uncore frequency failed: %d, %d\n",ret1, ret2);
+            }
+        }
+        for (i=active_dies;i<ncpu;++i) {
+            int ret1 = x86_adapt_set_setting(dieList[i], x86_uncore_min_index, MIN_UNCORE_FREQ);
+            int ret2 = x86_adapt_set_setting(dieList[i], x86_uncore_max_index, MIN_UNCORE_FREQ);
+            if (ret1!=8 || ret2!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting uncore frequency failed: %d, %d\n",ret1, ret2);
+            }
+        }
+        last_uncore = uncoreFreq;
+        last_active_die = active_dies;
+    }
+}
+void PAETT_modCoreFreqAll(uint64_t coreFreq) {
+    if(!initialized) return;
+    if(omp_in_parallel()) return;
+    int i;
+    if(coreFreq && (last_core!=coreFreq || last_active_die!=active_dies)) {
+        uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
+        for (i=0;i<active_dies*cpu_per_die;++i) {
+            int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
+            if (ret!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+            }
+        }
+        for (i=active_dies*cpu_per_die;i<ncpu;++i) {
+            int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, min_pstate);
+            if (ret!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+            }
+        }
+        last_core = coreFreq;
+        last_active_die = active_dies;
+    }
+}
+void PAETT_modUncoreFreqAll(uint64_t uncoreFreq) {
+    if(!initialized) return;
+    if(omp_in_parallel()) return;
+    int i;
+    if(uncoreFreq && (last_uncore!=uncoreFreq || last_active_die!=active_dies)) {
+        uint64_t uncore = uncoreFreq&0xff;
+        for (i=0;i<active_dies;++i) {
+            int ret1 = x86_adapt_set_setting(dieList[i], x86_uncore_min_index, uncore);
+            int ret2 = x86_adapt_set_setting(dieList[i], x86_uncore_max_index, uncore);
+            if (ret1!=8 || ret2!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting uncore frequency failed: %d, %d\n",ret1, ret2);
+            }
+        }
+        for (i=active_dies;i<ncpu;++i) {
+            int ret1 = x86_adapt_set_setting(dieList[i], x86_uncore_min_index, MIN_UNCORE_FREQ);
+            int ret2 = x86_adapt_set_setting(dieList[i], x86_uncore_max_index, MIN_UNCORE_FREQ);
+            if (ret1!=8 || ret2!=8) {
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting uncore frequency failed: %d, %d\n",ret1, ret2);
+            }
+        }
+        last_uncore = uncoreFreq;
+        last_active_die = active_dies;
+    }
+}
+#else
 // frequency modification with x86_adapt
 void PAETT_modFreqAll(uint64_t coreFreq, uint64_t uncoreFreq) {
     if(!initialized) return;
@@ -358,7 +484,8 @@ void PAETT_modUncoreFreqAll(uint64_t uncoreFreq) {
     }
 #endif
 }
-#endif
+#endif // USE_CPU_BIND
+#endif // USE_DYNAMIC_TUNING
 // timers
 void PAETT_time_begin(uint64_t key) {
     // DO NOTHING
@@ -369,6 +496,12 @@ void PAETT_time_end(uint64_t key) {
     return ;
 }
 void PAETT_modOMPThread(uint64_t n) {
+#ifdef USE_CPU_BIND
+    // calculate the number of active dies. Use upper bound
+    active_dies = (n+cpu_per_die-1) / cpu_per_die;
+    // binding sockets according to the active dies
+    int result = sched_setaffinity(0, sizeof(mask[active_dies-1]), &mask[active_dies-1]);
+#endif
 #ifndef MEASURE_OVERHEAD
     omp_set_num_threads(n);
 #else

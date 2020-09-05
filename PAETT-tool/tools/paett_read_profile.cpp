@@ -10,13 +10,13 @@
 using namespace std;
 unordered_map<uint64_t, string> keyMap;
 
-void readKeyMap() {
+void readKeyMap(const char* fn) {
     uint64_t r;
     const size_t ONE = 1;
     const size_t BUFFSIZE = 500;
-    FILE* fp = fopen(KEYMAP_FN".0","r");
+    FILE* fp = fopen(fn,"r");
     if(fp==NULL) {
-        printf("Fetal Error: KeyMap File %s could not open!\n", KEYMAP_FN".0");
+        printf("Fetal Error: KeyMap File %s could not open!\n", fn);
         exit(-1);
     }
     CallingContextLog::readKeyString(fp, keyMap);
@@ -27,10 +27,12 @@ struct options_struct {
     string prof_fn;
     bool print_data;
     bool print_significant;
+    string keymap_fn;
     options_struct() : 
         prof_fn(PAETT_PERF_INSTPROF_FN".0"),
         print_data(true),
-        print_significant(true)
+        print_significant(true),
+        keymap_fn(KEYMAP_FN".0")
     {}
 } options;
 
@@ -40,6 +42,7 @@ void usage() {
     printf("\t\t--print-data\t:print CallingContextTree with profiled data\n");
     printf("\t\t--print-significant\t:print automatically detected significant regions\n");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
+    printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's keymap file, the default value is %s\n", KEYMAP_FN".0");
 }
 
 void parse_args(int argc, char* argv[]) {
@@ -58,6 +61,14 @@ void parse_args(int argc, char* argv[]) {
                 exit(1);
             }
             options.prof_fn = string(argv[i]);
+        } else if(opt==string("--keymap_fn")) {
+            ++i;
+            if(argc==i) {
+                printf("--keymap_fn must have a value\n");
+                usage();
+                exit(1);
+            }
+            options.keymap_fn = string(argv[i]);
         } else {
             goto unknown;
         }
@@ -105,7 +116,7 @@ void mergeEventData(CallingContextLog* root) {
 
 int main(int argc, char* argv[]) {
     parse_args(argc, argv);
-    readKeyMap();
+    readKeyMap(options.keymap_fn.c_str());
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
     if(root==NULL) return 1;
     mergeEventData(root);

@@ -2,7 +2,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 import numpy as np
 
-from sklearn.preprocessing import StandardScaler 
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 import math
 
 from sklearn.metrics import mean_absolute_error
@@ -122,6 +122,44 @@ def MLP_model_init(num=9, hidden=(5,5)):
         model.intercepts_[ii] = np.array(weight)
     # create pipeline to include preprocess
     return Pipeline([('std',StandardScaler()),('model',model)])
+
+def MLP_model_init_no_pipeline(num=9, hidden=(5,5)):
+    model = MLPRegressor(hidden_layer_sizes=(5,5),activation='relu', solver='lbfgs', warm_start=True, max_iter=5000, early_stopping=True, random_state=10)
+    # model = MLPRegressor(hidden_layer_sizes=hidden,activation='relu', solver='adam', learning_rate_init=1e-5, warm_start=True, max_iter=1000, early_stopping=True)
+    # fake fit to obtain weights
+    model.fit([[0 for i in range(num)] for k in range(1000)],[0 for i in range(1000)])
+    for ii in range(len(model.coefs_)):
+        dd = model.coefs_[ii].tolist()
+        weight = []
+        for d in dd:
+            d2 = np.random.uniform(0,1,len(d))
+            map(lambda x: x*math.sqrt(2/len(d2)), d2)
+            weight.append(d2)
+        model.coefs_[ii] = np.array(weight)
+    for ii in range(len(model.intercepts_)):
+        dd = model.intercepts_[ii].tolist()
+        weight = []
+        for d in dd:
+            d2 = 0.0
+            # d2 = np.random.uniform(0,1,1)[0]*math.sqrt(2)
+            weight.append(d2)
+        model.intercepts_[ii] = np.array(weight)
+    # create pipeline to include preprocess
+    return model
+
+# model is MLP model, data_set small is data set without RAJA; data_set_all is data set with RAJA
+def train_with_two(model, I_data_set_small, O_data_set_small, I_data_set_all, O_data_set_all):
+    poly= PolynomialFeatures(2)
+    std = StandardScaler()
+    # first only fit standarizing with small data set without RAJA
+    std.fit(poly.transform(I_data_set_small))
+    # then transform the data
+    I_preprocessed = std.transform(poly.transform(I_data_set_all))
+    model.fit(I_preprocessed, O_data_set_all)
+    return poly, std, model
+
+def pack_MLP(poly, std, model):
+    return Pipeline([('poly',poly), ('std',std), ("model",model)])
 
 def GDBT_model_init():
     return Pipeline([('std',StandardScaler()),('model',GradientBoostingRegressor(loss='huber', learning_rate=0.1, n_estimators=80, subsample=0.8, max_depth=3, min_samples_split=130, min_samples_leaf=30, max_features=7, random_state=89))])

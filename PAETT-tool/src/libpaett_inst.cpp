@@ -61,6 +61,11 @@ FILE* RAPL_LOG;
 #define RLOG_FINI 
 #endif
 
+#ifdef USE_FREQMOD_CCT
+#define USE_NAMESPACE
+#include "libpaett_freqmod_cct.cpp"
+#endif
+
 static uint64_t* eventDataBuffer[MAX_THREAD];
 static uint64_t eventDataBufferIndex[MAX_THREAD];
 static CallingContextLog* root[MAX_THREAD];
@@ -122,6 +127,9 @@ void PAETT_print() {
 #else
     printf("========= Multi Thread Support Disabled!! ============\n");
 #endif
+#ifdef USE_FREQMOD_CCT
+    freqmod_cct::FUNCNAME(PAETT_print)();
+#endif
 }
 
 static std::vector<std::string> ename;
@@ -131,6 +139,7 @@ static bool detection_mode = false;
 static bool collect_energy = false;
 static double init_energy;
 
+// built-in metrics, can be modified by environment/file configurations
 static const char* _pre_ename[MAXEVENT] = {
     "ENERGY",
     "PAPI_BR_NTK",
@@ -146,7 +155,7 @@ static int _pre_esize = 8;
 static long long counterVal[MAXEVENT] = {0};
 static uint64_t g_cycles[MAX_THREAD] = {0};
 
-std::string profile_path;
+static std::string profile_path;
 
 #define SIGNIFICANT_REGION_DETECT_LOG "paett_filter.cct"
 
@@ -210,8 +219,10 @@ uint64_t* __allocate_eventLogSpace(int i, uint64_t s) {
 }
 
 void __preallocate_fini() {
-    for(int i=0;i<MAX_THREAD;++i) {
-        free(eventDataBuffer[i]);
+    if(eventNum>0) {
+        for(int i=0;i<MAX_THREAD;++i) {
+            free(eventDataBuffer[i]);
+        }
     }
 }
 
@@ -221,6 +232,9 @@ void PAETT_inst_init() {
         fprintf(stderr, "Error Duplicated initialization!!!\n");
         exit(EXIT_FAILURE);
     }
+#ifdef USE_FREQMOD_CCT
+    freqmod_cct::FUNCNAME(PAETT_inst_init)();
+#endif
     // PROFILE PATH
     char* envPath = getenv("PAETT_OUTPUT_PATH");
     if(envPath) {
@@ -265,49 +279,53 @@ void PAETT_inst_init() {
     }
     // other settings
     eventNum=ename.size(); 
-    int* eventList = (int*)malloc(sizeof(int)*eventNum);
-#ifdef MULTI_THREAD
-    _eventList = eventList;
-#endif
-    if(eventNum<=0) return ; // no perf event encountered
-    /* Initialize the PAPI library */
-    CHECK_PAPI(PAPI_library_init(PAPI_VER_CURRENT), PAPI_VER_CURRENT);
-    // check for available counters
-    int numCounter = PAPI_num_counters();
-    es=0, ee=eventNum;
-    if(eventNum>numCounter) {
-        printf("Error: Too much event is configured (%d events but the platform only support maximum %d events at a time)\n", eventNum, numCounter);
-        exit(1);
-    }
     // preallocate cct nodes and data spaces for metrics
     for(i=0;i<MAX_THREAD;++i) {
-        eventDataBuffer[i] = (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
-        if(eventDataBuffer[i]==NULL) {
-            printf("Failed to allocate memory!!!\n");
-            exit(1);
-        }
-        memset(eventDataBuffer[i], 0, sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
-        eventDataBufferIndex[i] = 0;
         root[i] = CallingContextLog::get();
         cur[i]=root[i];
         cur[i]->data.size = eventNum;
-        cur[i]->data.eventData = __allocate_eventLogSpace(i, eventNum*2);// (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
+        if(eventNum>0) {
+            eventDataBuffer[i] = (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
+            if(eventDataBuffer[i]==NULL) {
+                printf("Failed to allocate memory!!!\n");
+                exit(1);
+            }
+            memset(eventDataBuffer[i], 0, sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
+            eventDataBufferIndex[i] = 0;
+            cur[i]->data.eventData = __allocate_eventLogSpace(i, eventNum*2);// (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
+        }
     }
+    /* Initialize the PAPI library */
+    CHECK_PAPI(PAPI_library_init(PAPI_VER_CURRENT), PAPI_VER_CURRENT);
 #ifdef MULTI_THREAD
     CHECK_PAPI_ISOK(PAPI_thread_init(THREAD_HANDLER));
 #endif
-    assert(GET_THREADID==0);
-    printf("NumCounter: %d, Will Add %d Events\n",numCounter, eventNum); fflush(stdout);
-    /* Create the EventSet */
-    CHECK_PAPI_ISOK(PAPI_create_eventset(&EventSet)); fflush(stdout);
-    printf("EventSet: %d\n", EventSet);
-    /* Add Events to our created EventSet */
-    for(i=es;i<ee;++i) {
-        //CHECK_PAPI_ISOK(PAPI_event_code_to_name(eventList[i], ename));
-        CHECK_PAPI_ISOK(PAPI_event_name_to_code(ename[i].c_str(), &eventList[i]));
-        printf("Add Event: [%lx]", eventList[i]);  fflush(stdout);
-        printf("%s\n", ename[i].c_str()); fflush(stdout);
-        CHECK_PAPI_ISOK(PAPI_add_event(EventSet, eventList[i]));
+    // if(eventNum<=0) return ; // no perf event encountered
+    if(eventNum>0) {
+        int* eventList = (int*)malloc(sizeof(int)*eventNum);
+#ifdef MULTI_THREAD
+        _eventList = eventList;
+#endif
+        // check for available counters
+        int numCounter = PAPI_num_counters();
+        es=0, ee=eventNum;
+        if(eventNum>numCounter) {
+            printf("Error: Too much event is configured (%d events but the platform only support maximum %d events at a time)\n", eventNum, numCounter);
+            exit(1);
+        }
+        assert(GET_THREADID==0);
+        printf("NumCounter: %d, Will Add %d Events\n",numCounter, eventNum); fflush(stdout);
+        /* Create the EventSet */
+        CHECK_PAPI_ISOK(PAPI_create_eventset(&EventSet)); fflush(stdout);
+        printf("EventSet: %d\n", EventSet);
+        /* Add Events to our created EventSet */
+        for(i=es;i<ee;++i) {
+            //CHECK_PAPI_ISOK(PAPI_event_code_to_name(eventList[i], ename));
+            CHECK_PAPI_ISOK(PAPI_event_name_to_code(ename[i].c_str(), &eventList[i]));
+            printf("Add Event: [%lx]", eventList[i]);  fflush(stdout);
+            printf("%s\n", ename[i].c_str()); fflush(stdout);
+            CHECK_PAPI_ISOK(PAPI_add_event(EventSet, eventList[i]));
+        }
     }
     /* Init for energy collection if enabled */
     if(collect_energy) {
@@ -319,8 +337,10 @@ void PAETT_inst_init() {
     /* Start counting */
     elapsed_us = PAPI_get_real_usec();
 	elapsed_cyc = PAPI_get_real_cyc();
-    CHECK_PAPI_ISOK(PAPI_start(EventSet));
-    CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[0]->data.eventData[eventNum])));
+    if(eventNum>0) {
+        CHECK_PAPI_ISOK(PAPI_start(EventSet));
+        CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[0]->data.eventData[eventNum])));
+    }
     ++(cur[0]->data.ncall);
     initialized = 1;
     init_energy = get_pkg_energy();
@@ -349,6 +369,9 @@ void PAETT_inst_thread_init(uint64_t key) {
     // assert(cur[tid]->key==key);
     // Stop counting first to disable overflow
     cur[tid]->data.active_thread = std::max(cur[tid]->data.active_thread, (uint64_t)GET_ACTIVE_THREAD_NUM);
+#ifdef USE_FREQMOD_CCT
+    freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
+#endif
 }
 // Different from init, the fini instrumentation will do the work similiarly as PAETT_inst_exit, so only fini should be inserted.
 void PAETT_inst_thread_fini(uint64_t key) {
@@ -357,6 +380,9 @@ void PAETT_inst_thread_fini(uint64_t key) {
     if(tid==0) --danger;
     // printf("thread_exit for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
     PAETT_inst_exit(key);
+#ifdef USE_FREQMOD_CCT
+    freqmod_cct::FUNCNAME(PAETT_inst_thread_fini)(key);
+#endif
 }
 #endif
 void PAETT_inst_enter(uint64_t key) {
@@ -383,6 +409,9 @@ void PAETT_inst_enter(uint64_t key) {
     }
     cur[tid]->data.cycle += e_cycles - g_cycles[tid];
     //cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode);
+#ifdef USE_FREQMOD_CCT
+    freqmod_cct::FUNCNAME(PAETT_inst_enter)(key);
+#endif
     cur[tid] = cur[tid]->getOrInsertChild(key);
     //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
     //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
@@ -395,12 +424,13 @@ void PAETT_inst_enter(uint64_t key) {
     if(!detection_mode && cur[tid]->data.eventData==NULL && (!cur[tid]->pruned)) {
         cur[tid]->data.active_thread = 1;
         cur[tid]->data.size = eventNum;
-        cur[tid]->data.eventData = __allocate_eventLogSpace(tid,eventNum*2);//(uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
+        if(eventNum>0)
+            cur[tid]->data.eventData = __allocate_eventLogSpace(tid,eventNum*2);//(uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
         // memset(cur[tid]->data.eventData, 0, sizeof(uint64_t)*eventNum);
     }
     assert(cur[tid]);
     // printf("PAPI Collect? %d %d\n",detection_mode, cur[tid]->pruned);
-    if(!detection_mode && (!cur[tid]->pruned)) {
+    if(!detection_mode && (!cur[tid]->pruned)  && eventNum>0) {
         // printf("Collect for PAPI %0xlx\n",key);
         CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[tid]->data.eventData[eventNum])));
     }
@@ -430,7 +460,7 @@ void PAETT_inst_exit(uint64_t key) {
             p = p->parent;
         }
     }
-    if(!detection_mode && (!cur[tid]->pruned)) {
+    if(!detection_mode && (!cur[tid]->pruned) && eventNum>0) {
         CHECK_PAPI_ISOK(PAPI_read(EventSet, counterVal));
     }
 redo:
@@ -450,6 +480,9 @@ redo:
         }
         assert(cur[tid]!=root[tid]);
         assert(cur[tid]->parent);
+#ifdef USE_FREQMOD_CCT
+        freqmod_cct::FUNCNAME(PAETT_inst_exit)(key);
+#endif
         cur[tid] = cur[tid]->parent;
     } else {
 #ifdef ENABLE_INFO_LOG
@@ -487,6 +520,28 @@ redo:
 void PAETT_inst_finalize() {
     // disable first
     int retval;
+    // energy
+    uint64_t e_cycles = PAPI_get_real_usec();
+    if(collect_energy) {
+        double energy = get_pkg_energy();
+        double e = energy - cur[0]->data.last_energy;
+        CallingContextLog* p = cur[0];
+        while(p!=NULL) {
+            p->data.pkg_energy+= e;
+            RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
+            p = p->parent;
+        }
+    }
+    if(!detection_mode && (!cur[0]->pruned) && eventNum>0) {
+        CHECK_PAPI_ISOK(PAPI_read(EventSet, counterVal));
+    }
+    cur[0]->data.cycle += e_cycles - g_cycles[0];
+    if(!detection_mode && (!cur[0]->pruned)) {
+        uint64_t i;
+        for(i=0;i<eventNum;++i) {
+            cur[0]->data.eventData[i] += counterVal[i] - cur[0]->data.eventData[i+eventNum];
+        }
+    }
     if(detection_mode) {
         __PAETT_detect_finalize();
         std::string prof_fn = profile_path+std::string(KEYMAP_FN".0");
@@ -501,7 +556,8 @@ void PAETT_inst_finalize() {
         initialized = false;
         return ;
     }
-    CHECK_PAPI_ISOK(PAPI_stop(EventSet, counterVal));
+    if(eventNum>0)
+        CHECK_PAPI_ISOK(PAPI_stop(EventSet, counterVal));
     uint64_t end_us = PAPI_get_real_usec();
     uint64_t end_cyc = PAPI_get_real_cyc();
     elapsed_us = end_us - elapsed_us;
@@ -534,7 +590,8 @@ void PAETT_inst_finalize() {
     assert(root[tid]->data.ncall==1);
     // ROOT data.ncall should be set to 1 as the program is called once
     // root[tid].data.ncall = 1;
-    assert(root[tid]->data.eventData!=NULL);
+    if(eventNum>0)
+        assert(root[tid]->data.eventData!=NULL);
     if(cur[tid]!=root[tid]) {
         printf("Warning: [libpaett_inst] cur[%d] is not at root when paett_inst_finalize is called : ",tid);
         CallingContextLog* p = cur[0]->parent;
@@ -548,6 +605,7 @@ void PAETT_inst_finalize() {
 #endif
     std::string prof_fn = profile_path+std::string(PAETT_PERF_INSTPROF_FN)+"."+std::to_string(tid);
     CallingContextLog::fprint(prof_fn.c_str(), root[tid]);
+#ifndef USE_FREQMOD_CCT
     prof_fn = profile_path+std::string(KEYMAP_FN)+"."+std::to_string(tid);
     FILE* fkey = fopen(prof_fn.c_str(), "w");
     if(fkey!=NULL) {
@@ -557,11 +615,15 @@ void PAETT_inst_finalize() {
     } else {
         printf("Could not open %s to log keymap info!\n",prof_fn.c_str());
     }
+#endif
 #ifdef MULTI_THREAD
     }
     fclose(fp);
 #endif
-    printf("=== finish ===\n"); fflush(stdout);
     __preallocate_fini();
+#ifdef USE_FREQMOD_CCT
+    freqmod_cct::FUNCNAME(PAETT_inst_finalize)();
+#endif
     initialized = false;
+    printf("=== finish ===\n"); fflush(stdout);
 }

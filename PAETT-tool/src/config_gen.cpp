@@ -12,6 +12,8 @@
 #include <freqmod.h>
 #include <freqmod_API.h>
 
+#include <string>
+
 #define max(a,b) ((a)>(b)?(a):(b))
 
 struct config_metric_struct {
@@ -60,13 +62,184 @@ void generate_config() {
     fclose(fp);
 }
 
+#define U_MSR_PMON_FIXED_CTL 0x703
+#define U_MSR_PMON_FIXED_CTR 0x704
+#define UNCORE_CLK_MASK (uint64_t)(1<<22)
+// 10ms
+#define EST_TIME_US 10000
+#define EST_TIME_S  (EST_TIME_US*1e-6)
+
+#define REPORT_ERROR(msg) fprintf(stderr, "ERROR in %s:%d: %s", __FILE__, __LINE__, msg)
+#define CHECK_VALID_FD(x,msg) do { if((x)<0) { REPORT_ERROR(msg); exit(-1); } } while(0)
+
+#define CHECK(stmt) do { if(stmt!=0) {printf("%s Failed!\n",#stmt); exit(-1);} } while(0)
+#define RESET_FD(fd) lseek(fd, 0, SEEK_SET)
+
+static int* msr_fd;
+
+int init_msr() {
+    msr_fd = new int[PAETT_getNCPU()];
+    int i; char buff[20];
+    for (i = 0; i < PAETT_getNCPU(); i++) {
+        snprintf(buff, 20, "/dev/cpu/%d/msr", i);
+        msr_fd[i] = open(buff, O_RDWR);
+        CHECK_VALID_FD(msr_fd[i],"Failed to open msr!\n");
+    }
+    return 0;
+}
+void fin_msr() {
+    int i;
+    for(i=0;i<PAETT_getNCPU();++i) {
+        close(msr_fd[i]);
+    }
+    delete[] msr_fd;
+}
+
+int read_msr_by_idx(int dev_idx, off_t msr, uint64_t *val)
+{
+    int rc;
+    int fileDescriptor = msr_fd[dev_idx];
+    RESET_FD(fileDescriptor);
+    rc = pread(fileDescriptor, (void*)val, (size_t)sizeof(uint64_t), msr);
+    if (rc != sizeof(uint64_t))
+    {
+        printf("read_msr_by_idx(): Pread failed\n");
+        return -1;
+    }
+    return 0;
+}
+
+inline int write_msr_by_idx(int dev_idx, off_t msr, uint64_t val)
+{
+    int rc;
+    int fileDescriptor = msr_fd[dev_idx];
+    RESET_FD(fileDescriptor);
+    rc = pwrite(fileDescriptor, &val, (size_t)sizeof(uint64_t), msr);
+    if (rc != sizeof(uint64_t))
+    {
+        printf("write_msr_by_idx(): Pwrite failed\n");
+        return -1;
+    }
+    return 0;
+}
+
+double get_cur_uncore_freq() {
+    // read msr
+    uint64_t uclk_b, uclk_e;
+    read_msr_by_idx(0,U_MSR_PMON_FIXED_CTR,&uclk_b);
+    usleep(EST_TIME_US);
+    read_msr_by_idx(0,U_MSR_PMON_FIXED_CTR,&uclk_e);
+    //printf("%ld %ld, %ld\n",uclk_b, uclk_e, EST_TIME_S);
+    return ((double)(uclk_e-uclk_b))/(double)EST_TIME_S/1e9;
+}
+
+void disableTurbo() {
+    init_msr();
+    for(int i=0;i<PAETT_getNCPU();++i)
+        write_msr_by_idx(i,0x1a0,0x4000850089);
+    fin_msr();
+}
+
+void enableTurbo() {
+    init_msr();
+    for(int i=0;i<PAETT_getNCPU();++i)
+        write_msr_by_idx(i, 0x1a0, 0x850089);
+    fin_msr();
+}
+
+/* Core frequency range can be automatically parsed from the output of lscpu command. */
+void detect_core_range() {
+    FILE* pp;
+    if( (pp = popen("lscpu", "r")) == NULL ) {
+        printf("popen(\"lscpu\", \"r\") error!/n");
+        exit(1);
+    }
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    std::size_t found;
+    double fmax, fmin;
+    while ((read = getline(&line, &len, pp)) != -1) {
+        std::string s(line);
+        found = s.find("CPU max MHz:");
+        if (found!=std::string::npos) {
+            sscanf(line, "CPU max MHz:           %lf", &fmax);
+        }
+        found = s.find("CPU min MHz:");
+        if (found!=std::string::npos) {
+            sscanf(line, "CPU min MHz:           %lf", &fmin);
+        }
+    }
+    config_metric.core_min = (uint64_t)(fmin/100);
+    config_metric.core_max = (uint64_t)(fmax/100);
+    printf("Detected core frequency min: %ld\n",config_metric.core_min);
+    printf("Detected core frequency max: %ld\n",config_metric.core_max);
+}
+
+/* Uncore frequency range detection. We assume that the available 
+   uncore is in 100 MHz step, and we try each configurations from 
+   100 MHz to higher to find the available configuration range. */
+void detect_uncore_range() {
+    init_msr();
+    // enable uncore clk
+    uint64_t en;
+    read_msr_by_idx(0,U_MSR_PMON_FIXED_CTL,&en);
+    write_msr_by_idx(0, U_MSR_PMON_FIXED_CTL, (en|UNCORE_CLK_MASK));
+    config_metric.uncore_min = 1;
+    while(1) {
+        printf("[INFO] Checking %d...", config_metric.uncore_min);
+        PAETT_modUncoreFreqAll(MAKE_UNCORE_VALUE_BY_FREQ(config_metric.uncore_min));
+        usleep(100);
+        // as we only detecting the available configurations, so we just check one socket
+        double cur = get_cur_uncore_freq();
+        printf("Cur=%lf...",cur);
+        uint64_t uncore = uint64_t(cur*10+0.5);
+        if(uncore==config_metric.uncore_min) {
+            printf("Success\n");
+            break;
+        }
+        printf("Failed\n");
+        config_metric.uncore_min++;
+    }
+    config_metric.uncore_max = config_metric.uncore_min;
+    while(1) {
+        printf("[INFO] Checking %d...", config_metric.uncore_max);
+        PAETT_modUncoreFreqAll(MAKE_UNCORE_VALUE_BY_FREQ(config_metric.uncore_max));
+        usleep(100);
+        // as we only detecting the available configurations, so we just check one socket
+        double cur = get_cur_uncore_freq();
+        printf("Cur=%lf...",cur);
+        uint64_t uncore = uint64_t(cur*10+0.5);
+        if(uncore!=config_metric.uncore_max) {
+            printf("Failed\n");
+            break;
+        }
+        printf("Success\n");
+        config_metric.uncore_max++;
+    }
+    // now we recover the maximum uncore configuration as the current value is invalid
+    config_metric.uncore_max--;
+    write_msr_by_idx(0, U_MSR_PMON_FIXED_CTL, (en));
+    fin_msr();
+    printf("Detected uncore frequency min: %ld\n",config_metric.uncore_min);
+    printf("Detected uncore frequency max: %ld\n",config_metric.uncore_max);
+}
+
 void measure_freq_range() {
     printf("Measuring available frequency range ...\n");
+#ifdef MANNUAL_CONFIG
     // TODO: auto detection
     config_metric.core_max = 22;
     config_metric.core_min = 8;
     config_metric.uncore_min = 7;
     config_metric.uncore_max = 20;
+#else
+    // auto detection of core/uncore frequency ranges
+    //disableTurbo();
+    //enableTurbo();
+    detect_core_range();
+    detect_uncore_range();
+#endif
 }
 
 void measure_overhead(int n_iter) {
