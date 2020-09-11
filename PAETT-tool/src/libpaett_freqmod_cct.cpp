@@ -144,12 +144,12 @@ inline void __tuneTo(CCTFreqCommand* self) {
     uint64_t core = core_default;
     uint64_t uncore = uncore_default;
     if(self!=NULL) {
-        printf("-- Thread %d Tuning core[%d]=%ld, uncore[%d]=%ld\n", __cpu, __cpu, root->data.core, __die, root->data.uncore);
+        // printf("-- Thread %d Tuning core[%d]=%ld, uncore[%d]=%ld\n", __cpu, __cpu, root->data.core, __die, root->data.uncore);
         if(self->data.core)   core = self->data.core;
         if(self->data.uncore) uncore = self->data.uncore;
         if(self->data.thread) PAETT_modOMPThread(self->data.thread);
     }
-    printf("-- Thread %d Tuning with (core=%d, core=%d)", __cpu, core, uncore);
+    // printf("-- Thread %d Tuning with (core=%d, core=%d)", __cpu, core, uncore);
     PAETT_modCoreFreq(__cpu,core);
     PAETT_modUncoreFreq(__die, uncore);
 }
@@ -298,7 +298,7 @@ void FUNCNAME(PAETT_inst_enter)(uint64_t key) {
 
 void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
     //printf("THREAD_INIT...key=%ld\n",key);
-    if(root) root->printStack();
+    // if(root) root->printStack();
 #ifdef ENABLE_FINEGRANED_TUNING
     if(danger) return;
     if(root) {
