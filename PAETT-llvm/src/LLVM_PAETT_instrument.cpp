@@ -203,15 +203,19 @@ namespace {
         bool filterEnabled;
         std::unordered_map<std::string, uint64_t> filterMap;
         bool CCTFreqModEnabled;
-        Value* getInstKey(Module &M, LLVMContext &C, std::string debug_info) {
+        Value* getInstKey(Module &M, LLVMContext &C, std::string debug_info, bool force=false) {
             if(utils.isInvalidString(debug_info)) return NULL;
             // white list filtering if enabled
-            if(filterEnabled && std::find(filter.begin(), filter.end(), debug_info)==filter.end()) return NULL;
+            if(!force && filterEnabled && std::find(filter.begin(), filter.end(), debug_info)==filter.end()) return NULL;
             // if CCT Frequency optimization filter is configured, use the specified key value instead
             if(CCTFreqModEnabled) {
                 auto keyPair = filterMap.find(debug_info);
-                if(keyPair==filterMap.end()) return NULL;
-                return llvm::ConstantInt::get(Type::getInt64Ty(C), keyPair->second);
+                if(keyPair!=filterMap.end())
+                    return llvm::ConstantInt::get(Type::getInt64Ty(C), keyPair->second);
+                else if (!force)
+                    return NULL;
+                else // force to generate a key
+                    return llvm::ConstantInt::get(Type::getInt64Ty(C), 0);
             }
             // otherwise, generate a global string containing the debug_info and take the address of the beginning of the string as key value
             // this will guarantee the different string has different key value and same code location will has the same key value
@@ -250,9 +254,12 @@ namespace {
             for(Function::iterator BB = F->begin(), E = F->end(); BB != E; ++BB) {
 			 	for(BasicBlock::iterator BI = BB->begin(), BE = BB->end(); BI != BE; ++BI) {
                     if(auto *op=dyn_cast<CallInst>(&(*BI))) {
-                        std::string name = op->getCalledFunction()->getName().str();
-                        if(name=="exit") {
-                            list.push_back(op);
+                        Function* calledFunc = op->getCalledFunction();
+                        if(calledFunc) {
+                            std::string name = calledFunc->getName().str();
+                            if(name=="exit") {
+                                list.push_back(op);
+                            }
                         }
                     }
                     if(auto *op=dyn_cast<ReturnInst>(&(*BI))) {
@@ -263,14 +270,29 @@ namespace {
         }
         void insertInstrumentationCalls(Module &M, Function* F) {
             std::string Fname = F->getName().str();
+            LLVMContext &C = F->getContext();
+            Value* key;
             if(Fname.find(".omp")!=std::string::npos) {
-                printf("****** SKIP Hanlding OMP function: %s\n",Fname.c_str());
+                printf("****** Hanlding OMP function: %s (%s)\n",Fname.c_str(),utils.func2string(F).c_str());
+                key = getInstKey(M, C, utils.func2string(F), true);
+                printf("Value* key=%p\n",key);
+                assert(key!=NULL);
+                printf("Inserting Enter...\n");
+                Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                enterInst->insertBefore(&(*F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime()));
+                std::vector<Instruction*> list;
+                printf("Inserting Exit...\n");
+                getFunctionExitOps(F, list);
+                for(int i=0, n=list.size();i<n;++i) {
+                    printf("%d...\n", i);
+                    Instruction *ExitInst = CallInst::Create(hookExit,{key});
+                    ExitInst->insertBefore(list[i]);
+                }
+                printf("****** Finish Handling OMP function: %s (%s)\n", Fname.c_str(),utils.func2string(F).c_str());
                 return ;
             }
-            Value* key;
             // LoopInfo must be obtained by LoopInfoWrapperPass
             LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
-            LLVMContext &C = F->getContext();
             auto ll = LI.getLoopsInPreorder();
             std::vector<Loop*> list;
 #define MERGE_NESTED_LOOPS_IF_POSSIBLE

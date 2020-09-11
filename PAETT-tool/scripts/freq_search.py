@@ -46,6 +46,9 @@ class Configuration:
     def get_min_uncore(self):
         return self.config['MIN_UNCORE_FREQ']
 
+    def get_max_thread(self):
+        return self.config['NCPU']
+
 # global configurations
 config = Configuration()
 
@@ -397,11 +400,15 @@ class CallingContextTree:
                 keys = cont[:-1]
                 vals = cont[-1].split(" ")
                 p = self
-                for k in keys:
+                assert(keys[0]=="ROOT")
+                for k in keys[1:]:
+                    # TODO: Need to figure out why empty string is generated from profile
+                    if(k==''):
+                        continue
                     p = p.getOrInsertChild(k)
-                p.core = vals[0]
-                p.uncore = vals[1]
-                p.thread = vals[2]
+                p.core = int(vals[0])
+                p.uncore = int(vals[1])
+                p.thread = int(vals[2])
 
     def generate_frequency_commands(self, file, keyMap, pre=[]):
         if self.core!=-1 and (not self.pruned):
@@ -410,6 +417,7 @@ class CallingContextTree:
             #     key = keyMap[self.name]
             # else:
             #     keyMap[self.name] = key
+            print(self.name)
             key = keyMap[self.name]
             file.write(str(len(pre)+1)+" ")
             for k in pre:
@@ -422,10 +430,12 @@ class CallingContextTree:
         return self.name
 
     def print(self, pre=""):
+        comments = ""
+        if self.tuning:
+            comments += "[tuning]"
         if self.pruned:
-            print(pre+"+ ", self.name, (self.core, self.uncore, self.thread), "[pruned]" )
-        else:
-            print(pre+"+ ", self.name, (self.core, self.uncore, self.thread) )
+            comments += "[pruned]"
+        print(pre+"+ ", self.name, (self.core, self.uncore, self.thread), comments )
         for r in self.child.keys():
             self.child[r].print(pre+"|   ")
 
@@ -449,6 +459,17 @@ class CallingContextTree:
             self.pruned = False
         for r in self.child.keys():
             self.child[r].recover()
+    
+    def reset_freq(self):
+        self.core=0
+        self.uncore=0
+        for r in self.child.keys():
+            self.child[r].reset_freq()
+    
+    def reset_thread(self):
+        self.thread=0
+        for r in self.child.keys():
+            self.child[r].reset_thread()
 
     def check(self, tot_energy, threshold=0.01):
         if self.metric.get(self.core, self.uncore) / tot_energy < threshold:
@@ -464,19 +485,19 @@ class CallingContextTree:
             if self.parent is not None:
                 self.core = self.parent.core
             else:
-                self.core = 22 # max
+                self.core = config.get_max_core() # max
         if self.uncore==0:
             self.tuning = False
             if self.parent is not None:
                 self.uncore = self.parent.uncore
             else:
-                self.uncore = 20 # max
+                self.uncore = config.get_max_uncore() # max
         if self.thread==0:
             self.tuning = False
             if self.parent is not None:
                 self.thread = self.parent.thread
-            else:
-                self.thread = 20 # max
+            # else:
+            #     self.thread = config.get_max_thread() # max
         for r in self.child.keys():
             self.child[r].standardize()
 
@@ -518,40 +539,64 @@ def load_thread_cct(cct_fn):
     # standarize cct
     if VERBOSE:
         cct.print()
-    cct.standardize()
-    cct.optimize(lock=True)
+    # cct.standardize()
+    # cct.optimize()
     if VERBOSE:
         print("---------------")
         cct.print()
         print("---------------")
     return cct
 
-def load_cct_from_metrics(cct, metric_fn, thread=0, core=0, uncore=0):
+def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
     if cct is None:
         cct = CallingContextTree()
+    if core<0:
+        core = config.get_max_core()
+    if uncore<0:
+        uncore = config.get_max_uncore()
+    updated = False
     with open(metric_fn,"r") as f:
-            for line in f:
-                cont = line.split(' ')
-                if len(cont)==0:
-                    continue
-                record = []
-                cont = line.split(';')
-                key = cont[0]
-                cont = cont[1].split(' ')
-                for s in cont:
-                    record.append(float(s))
-                metric = record[:-1]
-                energy = record[-1]
-                # split to regions, and ignore the last two (ROOT, empty)
-                keys = key.split('=>')[:-2]
-                keys.reverse()
-                p = cct
-                for k in keys:
-                    p = p.getOrInsertChild(k)
-                if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
-                    p.additional = (metric, energy)
+        for line in f:
+            cont = line.split(' ')
+            if len(cont)==0:
+                continue
+            record = []
+            cont = line.split(';')
+            key = cont[0]
+            cont = cont[1].split(' ')
+            for s in cont:
+                record.append(float(s))
+            metric = record[:-1]
+            energy = record[-1]
+            # split to regions, and ignore the last two (ROOT, empty)
+            keys = key.split('=>')[:-2]
+            keys.reverse()
+            p = cct
+            for k in keys:
+                if k=='':
+                    print("Error: ", keys)
+                    print("-- line=\"{0}\"".format(line))
+                    print("-- key=\"{0}\"".format(key))
+                    exit(1)
+                p = p.getOrInsertChild(k)
+            if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
+                p.additional = (metric, energy)
+                if thread>0:
                     p.thread = thread
+                p.core = core
+                p.uncore = uncore
+                updated = True
+    if updated:
+        cct.print()
     return cct
+
+def get_cct_energy(cct):
+    tot_energy = 0
+    if cct.additional is not None:
+        tot_energy += cct.additional[1]
+    for r in cct.child.keys():
+        tot_energy += get_cct_energy(cct.child[r])
+    return tot_energy
 
 def generate_cct_frequency_commands(cct, name):
     cct.optimize() # optimize CCT to generate optimized commands
@@ -562,6 +607,7 @@ def generate_cct_frequency_commands(cct, name):
     with open(name+".cct", "w", newline='') as f:
         cct.generate_frequency_commands(f, keyMap)
     cct.recover() # recover CCT as optimized commands may also can be fine tuned later
+    return name+".cct"
 
 def load_keyMap(fn):
     keyMap = {"ROOT":-1}
@@ -577,8 +623,11 @@ def load_keyMap(fn):
 def exec_once(exe, cct, keymap_fn, update=True):
     res_fn = "metric.dat.search"
     tmp_cct_fn = "frequency_command.tmp"
-    generate_cct_frequency_commands(cct, tmp_cct_fn)
+    tmp_cct_fn = generate_cct_frequency_commands(cct, tmp_cct_fn)
     os.environ['PAETT_CCT_FREQUENCY_COMMAND_FILE'] = tmp_cct_fn
+    os.environ['PAETT_ENABLE_FREQMOD'] = 'ENABLE'
+    # only collect energy information
+    os.environ['PAETT_PROFILE_EVENTS'] = 'ENERGY'
     exe += " > paett-run.log"
     if VERBOSE:
         print("-- Running: ", exe)
@@ -696,22 +745,49 @@ def grid_search(exe, cct, keymap_fn, grid_size=2):
     cct.step()
     cct.print()
 
+def get_metric_name(pre, core, uncore, tnum):
+    return "{0}metric.dat.{1}.{2}.{3}".format(pre,core,uncore,tnum)
+
 # execute *exe* with *tnum* threads
 # the number of threads will be sent as the last argument of *exe*
 # and OMP_NUM_THREADS will automatically set to the tnum
-def thread_exec(exe, tnum, keymap_fn, out_dir='./', no_papi=True):
-    res_fn = out_dir+"metric.dat.thread." + str(tnum)
-    os.environ['OMP_NUM_THREADS'] = str(tnum)
+def exec(exe, tnum, core, uncore, keymap_fn, out_dir='./', papi_events=[], cct_fn=None, res_fn=None, enable_freqmod=True, generate_keymap=False):
+    if res_fn==None:
+        res_fn = get_metric_name(out_dir,core, uncore, tnum)
+    os.environ.pop('PAETT_DETECT_MODE', 'Not-found')
+    if tnum>0:
+        os.environ['OMP_NUM_THREADS'] = str(tnum)
+    else:
+        os.environ.pop('OMP_NUM_THREADS', 'Not-found')
+    if cct_fn is not None:
+        os.environ['PAETT_CCT_FREQUENCY_COMMAND_FILE'] = cct_fn
+    else:
+        os.environ.pop('PAETT_CCT_FREQUENCY_COMMAND_FILE', 'Not-found')
+    os.environ['PAETT_DEFAULT_CORE_FREQ'] = str(core)
+    os.environ['PAETT_DEFAULT_UNCORE_FREQ'] = str(uncore)
+    if enable_freqmod:
+        os.environ['PAETT_ENABLE_FREQMOD'] = 'ENABLE'
+    else:
+        os.environ['PAETT_ENABLE_FREQMOD'] = 'DISABLE'
+    if generate_keymap:
+        os.environ['PAETT_KEYMAP_PATH'] = keymap_fn
+    else:
+        os.environ.pop('PAETT_KEYMAP_PATH', 'Not-found')
     # if PAPI profiling is not needed, we just disable this
-    if no_papi:
-        os.environ['PAETT_DETECT_MODE'] = 'ENABLE'
+    events = "ENERGY"
+    for pe in papi_events:
+        events = events + ";" + pe
+    os.environ['PAETT_PROFILE_EVENTS'] = events
     exe += " > paett-run.log."+str(tnum)
     if VERBOSE:
         print("-- Running: ", exe)
-    subprocess.check_call("{0} {1}".format(exe, str(tnum)), shell=True)
-    cmd = "freq_set {0} {1}".format(str(config.get_max_core()), str(config.get_max_uncore()))
+    cmd = "freq_set {0} {1}".format(str(core), str(uncore))
     subprocess.check_call(cmd, shell=True)
     subprocess.check_call("sleep 1", shell=True)
+    if tnum>0:
+        subprocess.check_call("{0} {1}".format(exe, str(tnum)), shell=True)
+    else:
+        subprocess.check_call(exe, shell=True)
     subprocess.check_call("rm -rf "+res_fn, shell=True)
     if keymap_fn is not None:
         cmd = "filter_significant_profile --keymap_fn "+keymap_fn + " > " + res_fn
@@ -721,8 +797,7 @@ def thread_exec(exe, tnum, keymap_fn, out_dir='./', no_papi=True):
     return res_fn
 
 # [start, end], with step size *step*
-def thread_search(exe, keymap_fn, start, end, step, thread_res_fn="thread.cct"):
-    cct = None
+def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, thread_res_fn="thread.cct"):
     # temporary metric output files
     out_dir = 'thread_metrics/'
     if os.path.exists(out_dir):
@@ -730,13 +805,25 @@ def thread_search(exe, keymap_fn, start, end, step, thread_res_fn="thread.cct"):
     os.mkdir(out_dir)
     # add single thread execution as baseline
     print("Running with 1 Thread")
-    if start>1:
-        res_fn = thread_exec(exe, 1, keymap_fn, out_dir)
-        cct = load_cct_from_metrics(cct, res_fn, 1)
+    res_fn = exec(exe, 1, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
+    cct = load_cct_from_metrics(None, res_fn, 1)
+    energy = get_cct_energy(cct)
+    if start==1:
+        start = start + step
     for i in range(start, end+1, step):
         print("Running with {0} Thread".format(i))
-        res_fn = thread_exec(exe, i, keymap_fn, out_dir)
-        cct = load_cct_from_metrics(cct, res_fn, i)
+        res_fn = exec(exe, i, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
+        # thread configuration must be consistant across all ccts
+        if enable_consistant_thread:
+            cct_tmp = load_cct_from_metrics(None, res_fn, i)
+            cct_tmp.thread = i
+            energy_tmp = get_cct_energy(cct_tmp)
+            if energy_tmp < energy:
+                print("Update to Thread {0}, energy {1} J".format(i, energy_tmp))
+                cct = cct_tmp
+                energy = energy_tmp
+        else:
+            cct = load_cct_from_metrics(cct, res_fn, i)
     if thread_res_fn is not None:
         print("Save thread optimized cct to ", thread_res_fn)
         cct.saveTo(thread_res_fn)
@@ -744,16 +831,107 @@ def thread_search(exe, keymap_fn, start, end, step, thread_res_fn="thread.cct"):
         #     cct.generate_frequency_commands(f, keyMap)
     return cct
 
+def exaustive_search(exe, cct, keymap_fn, enable_continue, enable_thread=False):
+    out_dir = 'metrics/'
+    if enable_continue:
+        if not os.path.exists(out_dir):
+            print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
+            enable_continue = False
+    else:
+        if os.path.exists(out_dir):
+            shutil.rmtree(out_dir)
+        os.mkdir(out_dir)
+    thread_list = [0]
+    if enable_thread:
+        thread_list = [ i for i in range(1,config.get_max_thread()) ]
+        cct.reset_thread()
+    cct.reset_freq()
+    cct.optimize()
+    tmp_cct_fn = "frequency_command.tmp"
+    tmp_cct_fn = generate_cct_frequency_commands(cct, tmp_cct_fn)
+    for t in thread_list:
+        for c in range(config.get_min_core(), config.get_max_core()+1):
+            for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
+                print("-- [Info] Trying core={0}, uncore={1}, thread={2}".format(c, uc, t))
+                res_fn = get_metric_name(out_dir, c, uc, t)
+                if not (enable_continue or os.path.exists(res_fn)):
+                    res_fn = exec(exe, t, c, uc, keymap_fn, out_dir=out_dir, cct_fn=tmp_cct_fn, res_fn=res_fn)
+                cct = load_cct_from_metrics(cct, res_fn, t, c, uc)
+    cct.optimize()
+    if VERBOSE:
+        print("-- [INFO] Exaustive search finished. Final CCT frequency command: ")
+        cct.print()
+    return cct
+
+def exec_static(exe, tnum, core, uncore):
+    if tnum>0:
+        os.environ['OMP_NUM_THREADS'] = str(tnum)
+    else:
+        os.environ.pop('OMP_NUM_THREADS', 'Not-found')
+    cmd = "freq_set {0} {1}".format(str(core), str(uncore))
+    subprocess.check_call(cmd, shell=True)
+    subprocess.check_call("sleep 1", shell=True)
+    if tnum>0:
+        subprocess.check_call("{ "+"perf stat -e energy-pkg {0} {1} 2>&1; ".format(exe, str(tnum))+"} > log", shell=True)
+    else:
+        subprocess.check_call("{ "+"perf stat -e energy-pkg {0} 2>&1; ".format(exe)+"} > log", shell=True)
+    energy = 0
+    time = 0
+    with open("log","r") as f:
+        for line in f:
+            if "Joules energy-pkg" in line:
+                cont = line.split()
+                energy = float(cont[0].replace(',',''))
+            if "seconds time elapsed" in line:
+                cont = line.split()
+                time = float(cont[0].replace(',',''))
+    return energy, time
+
+def thread_search_static(exe, start, end, step):
+    thread = 1
+    print("Running with 1 Thread")
+    emin, tmin = exec_static(exe, 1, config.get_max_core(), config.get_max_uncore())
+    if start==1:
+        start+=step
+    for i in range(start, end+1, step):
+        print("Running with {0} Thread".format(i))
+        e, t = exec_static(exe, i, config.get_max_core(), config.get_max_uncore())
+        if emin > e or (emin==e and tmin>t):
+            emin = e
+            tmin = t
+            thread = i
+    return thread
+
+def static_search(exe, tnum=0, enable_thread=False):
+    thread_list = [tnum]
+    if enable_thread:
+        thread_list = [ i for i in range(1,config.get_max_thread()) ]
+    emin = None
+    tmin = None
+    core = None
+    uncore = None
+    for n in thread_list:
+        for c in range(config.get_min_core(), config.get_max_core()+1):
+            for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
+                print("-- [Info] Trying core={0}, uncore={1}, thread={2}".format(c, uc, n))
+                e, t = exec_static(exe, n, c, uc)
+                if emin is None or emin>e or (emin==e and tmin>t):
+                    print("-- [Info] Update: thread={0}, core={1}, uncore={2} (energy={3}, time={4})".format(n,c,uc,e,t))
+                    emin, tmin, tnum, core, uncore = e, t, n, c, uc
+    return tnum, core, uncore
+
+
 def usage():
     return
 
 if __name__=="__main__":
-    keymap_fn = "PAETT.keymap.0"
-    cct_src = ""
+    keymap_fn = "PAETT.keymap"
+    cct_src = "thread.cct"
     exe = "./run.sh"
-    out_fn = "frequency_command.hillclimb"
+    out_fn = "frequency_command"
     use_hill = False
     use_grid = False
+    use_exaustive = False
     grid_size = 2
     max_iter = -1
     read_only= False
@@ -762,7 +940,11 @@ if __name__=="__main__":
     thread_end = 28
     thread_step = 2
     use_thread_search = True
-    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "keymap=","cct-src=","output=", "run", "hill-climbing", "grid-search", "grid-size=", "max-iter", "read-only", "thread-only", "tbegin", "tend", "tstep"])
+    use_static = False
+    enable_consistant_thread = False
+    enable_continue = False
+    out_dir = "metrics"
+    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "keymap=","cct-src=","output=", "run", "exaustive", "hill-climbing", "grid-search", "grid-size=", "max-iter", "read-only", "thread-only", "tbegin", "tend", "tstep", "static", "consistant-thread", "continue"])
     for opt, arg in opts:
         if opt in ("-h", "--help"):
             usage()
@@ -778,10 +960,16 @@ if __name__=="__main__":
             out_fn = arg
         elif opt in ("-r", "--run"):
             exe = arg
+        elif opt == "--static":
+            use_static=True
         elif opt == "--grid-search":
             use_grid = True
         elif opt == "--hill-climbing":
             use_hill = True
+        elif opt == "--exaustive":
+            use_exaustive = True
+        elif opt == "--continue":
+            enable_continue = True
         elif opt == "--grid-size":
             grid_size = int(arg)
         elif opt == "--max-iter":
@@ -796,24 +984,46 @@ if __name__=="__main__":
             thread_end = int(arg)
         elif opt == "--tstep":
             thread_step = int(arg)
+        elif opt == "--consistant-thread":
+            enable_consistant_thread = True
         else:
             print("Error: Unknown option: ", opt)
             usage()
             sys.exit(1)
     if use_thread_search:
         print("[Info] Thread Search Enabled")
-    if not (thread_only or use_hill or use_grid):
+    if use_static:
+        print("Searching for optimal static configuration...")
+        if use_thread_search:
+            thread_num = thread_search_static(exe, thread_begin, thread_end, thread_step)
+        else:
+            thread_num = int(os.environ['OMP_NUM_THREADS'])
+            print("Thread Search disabled. Use OMP_NUM_THREADS={0}", thread_num)
+        if thread_only:
+            print("[Info] Thread only enabled. Skip core/uncore frequency searching")
+            tnum, core, uncore = thread_num, 0, 0
+        else:
+            tnum, core, uncore = static_search(exe, thread_num)
+        print("** Final Result: thread={0}, core={1}, uncore={2} **".format(tnum, core, uncore))
+        exit(0)
+    if not (thread_only or use_hill or use_grid or use_exaustive):
         use_hill = True
     if use_hill and use_grid:
         print("Error: --hill-climbing and --grid-search could not use simultaneously!")
         sys.exit(1)
+    if (use_hill and use_exaustive) or (use_grid and use_exaustive) or (use_hill and use_grid):
+        print("Error: Should only configure one of --hill-climbing, --grid-search, --exaustive")
+        sys.exit(1)
     if use_hill:
         print("[Info] Use hillclimbing")
-    else:
+    elif use_grid:
         print("[Info] Use Grid searching")
+    else:
+        print("[Info] Use Exaustive searching")
     keyMap = load_keyMap(keymap_fn)
     if use_thread_search:
-        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step)
+        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step, enable_consistant_thread)
+        cct = load_thread_cct("thread.cct")
     else:
         if thread_only:
             print("Thread search will not be applied as thread info has already given: ", cct_src)
@@ -828,4 +1038,6 @@ if __name__=="__main__":
             hill_climbing(exe, cct, keymap_fn, max_iter)
         if use_grid:
             grid_search(exe, cct, keymap_fn, grid_size)
+        if use_exaustive:
+            exaustive_search(exe, cct, keymap_fn, enable_continue)
         generate_cct_frequency_commands(cct, out_fn)

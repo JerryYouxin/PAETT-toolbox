@@ -10,33 +10,36 @@
 using namespace std;
 unordered_map<uint64_t, string> keyMap;
 
+struct options_struct {
+    string prof_fn;
+    string output;
+    string keymap;
+    options_struct() : 
+        prof_fn(PAETT_PERF_INSTPROF_FN".0"),
+        output("paett.filt"),
+        keymap(KEYMAP_FN)
+    {}
+} options;
+
 void readKeyMap() {
     uint64_t r;
     const size_t ONE = 1;
     const size_t BUFFSIZE = 500;
-    FILE* fp = fopen(KEYMAP_FN".0","r");
+    FILE* fp = fopen(options.keymap.c_str(),"r");
     if(fp==NULL) {
-        printf("Fetal Error: KeyMap File %s could not open!\n", KEYMAP_FN".0");
+        printf("Fetal Error: KeyMap File %s could not open!\n", options.keymap.c_str());
         exit(-1);
     }
     CallingContextLog::readKeyString(fp, keyMap);
     fclose(fp);
 }
 
-struct options_struct {
-    string prof_fn;
-    string output;
-    options_struct() : 
-        prof_fn(PAETT_PERF_INSTPROF_FN".0"),
-        output("paett.filt")
-    {}
-} options;
-
 void usage() {
     printf("Usage: filter_gen <options>\n");
     printf("\tAvailable Options:\n");
     printf("\t\t--out <path/to/output>\t:set path to genereted PAETT's filter file for compiling, the default value is %s\n", "paett.filt");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
+    printf("\t\t--keymap <path/to/keymap>\t:set path to PAETT's generated keymap, the default value is %s\n", KEYMAP_FN);
 }
 
 void parse_args(int argc, char* argv[]) {
@@ -59,6 +62,14 @@ void parse_args(int argc, char* argv[]) {
                 exit(1);
             }
             options.prof_fn = string(argv[i]);
+        } else if(opt==string("--keymap")) {
+            ++i;
+            if(argc==i) {
+                printf("--keymap must have a value\n");
+                usage();
+                exit(1);
+            }
+            options.keymap = string(argv[i]);
         } else {
             goto unknown;
         }
@@ -86,7 +97,8 @@ void print_cct(CallingContextLog* root, bool print_data, string pre="") {
 
 void __generate_filter(FILE* fp, CallingContextLog* root) {
     if(!root->pruned) {
-        fprintf(fp, "%s\n", keyMap[root->key].c_str());
+        // fprintf(fp, "%s\n", keyMap[root->key].c_str());
+        fprintf(fp, "%ld %s\n", root->key, keyMap[root->key].c_str());
     }
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
         __generate_filter(fp, CB->second);

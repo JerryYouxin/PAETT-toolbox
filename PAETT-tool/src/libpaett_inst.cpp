@@ -61,11 +61,11 @@ FILE* RAPL_LOG;
 #define RLOG_FINI 
 #endif
 
-#ifdef USE_FREQMOD_CCT
+// freqmod can be enabled by setting environment variable PAETT_ENABLE_FREQMOD as 'ENABLE'
 #define USE_NAMESPACE
 #include "libpaett_freqmod_cct.cpp"
-#endif
 
+static bool enable_freqmod = false;
 static uint64_t* eventDataBuffer[MAX_THREAD];
 static uint64_t eventDataBufferIndex[MAX_THREAD];
 static CallingContextLog* root[MAX_THREAD];
@@ -127,9 +127,6 @@ void PAETT_print() {
 #else
     printf("========= Multi Thread Support Disabled!! ============\n");
 #endif
-#ifdef USE_FREQMOD_CCT
-    freqmod_cct::FUNCNAME(PAETT_print)();
-#endif
 }
 
 static std::vector<std::string> ename;
@@ -137,6 +134,7 @@ int es, ee;
 
 static bool detection_mode = false;
 static bool collect_energy = false;
+static bool generate_keymap= false;
 static double init_energy;
 
 // built-in metrics, can be modified by environment/file configurations
@@ -156,6 +154,7 @@ static long long counterVal[MAXEVENT] = {0};
 static uint64_t g_cycles[MAX_THREAD] = {0};
 
 static std::string profile_path;
+static std::string keymap_path;
 
 #define SIGNIFICANT_REGION_DETECT_LOG "paett_filter.cct"
 
@@ -178,6 +177,7 @@ bool __PAETT_detect_init() {
 #endif
         printf("INFO: Will Running in detection mode for significant region detection\n");
         detection_mode = true;
+        generate_keymap= true;
     } else if(detectResEnv) {
         FILE* fp = fopen(detectResEnv,"rb");
         if(fp==NULL) {
@@ -232,15 +232,25 @@ void PAETT_inst_init() {
         fprintf(stderr, "Error Duplicated initialization!!!\n");
         exit(EXIT_FAILURE);
     }
-#ifdef USE_FREQMOD_CCT
-    freqmod_cct::FUNCNAME(PAETT_inst_init)();
-#endif
+    char* freqmodEnv = getenv("PAETT_ENABLE_FREQMOD");
+    enable_freqmod = (freqmodEnv && std::string(freqmodEnv)=="ENABLE");
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_print)();
+        freqmod_cct::FUNCNAME(PAETT_inst_init)();
+    }
     // PROFILE PATH
     char* envPath = getenv("PAETT_OUTPUT_PATH");
     if(envPath) {
         profile_path = std::string(envPath);
     } else {
         profile_path = std::string("./");
+    }
+    envPath = getenv("PAETT_KEYMAP_PATH");
+    if(envPath) {
+        keymap_path = std::string(envPath);
+        generate_keymap = true;
+    } else {
+        keymap_path = std::string(KEYMAP_FN);
     }
     warn_time = 0;
     LOG = fopen(LIBPAETT_INST_LOGFN,"w");
@@ -253,29 +263,53 @@ void PAETT_inst_init() {
         return;
     }
     assert(!detection_mode);
-    FILE* efile = fopen("profile.event","r");
-    if(efile==NULL) {
-        printf("INFO: profile.event not found for profiling! Use predefined event set.\n");
-        int i;
-        for(i=0;i<_pre_esize;++i) {
-            std::string en_str = std::string(_pre_ename[i]);
-            if(en_str==std::string("ENERGY")) {
+    // check PAPI counters from environment
+    char* eEnv = getenv("PAETT_PROFILE_EVENTS");
+    if(eEnv) {
+        printf("*** PAETT_PROFILE_EVENTS=%s ***\n", eEnv);
+        int i = 0;
+        int len = strlen(eEnv);
+        while(i<len) {
+            char* cur = &eEnv[i];
+            while(eEnv[i]!=';' && i<len) ++i;
+            // if seperator found, replace it with '\0', indicating that the end of this event string
+            if(i<len) {
+                eEnv[i]='\0';
+                ++i; // skip this seperator in the next iteration
+            }
+            std::string event(cur);
+            if(event==std::string("ENERGY")) {
                 collect_energy = true;
             } else {
-                ename.push_back(en_str);
+                ename.push_back(event);
             }
         }
     } else {
-        char en[50];
-        while(EOF!=fscanf(efile, "%s", en)) {
-            std::string en_str = std::string(en);
-            if(en_str==std::string("ENERGY")) {
-                collect_energy = true;
-            } else {
-                ename.push_back(en_str);
+        // if environment is not set, check for config file
+        FILE* efile = fopen("profile.event","r");
+        if(efile==NULL) {
+            printf("INFO: profile.event not found for profiling! Use predefined event set.\n");
+            int i;
+            for(i=0;i<_pre_esize;++i) {
+                std::string en_str = std::string(_pre_ename[i]);
+                if(en_str==std::string("ENERGY")) {
+                    collect_energy = true;
+                } else {
+                    ename.push_back(en_str);
+                }
             }
+        } else {
+            char en[50];
+            while(EOF!=fscanf(efile, "%s", en)) {
+                std::string en_str = std::string(en);
+                if(en_str==std::string("ENERGY")) {
+                    collect_energy = true;
+                } else {
+                    ename.push_back(en_str);
+                }
+            }
+            fclose(efile);
         }
-        fclose(efile);
     }
     // other settings
     eventNum=ename.size(); 
@@ -369,9 +403,9 @@ void PAETT_inst_thread_init(uint64_t key) {
     // assert(cur[tid]->key==key);
     // Stop counting first to disable overflow
     cur[tid]->data.active_thread = std::max(cur[tid]->data.active_thread, (uint64_t)GET_ACTIVE_THREAD_NUM);
-#ifdef USE_FREQMOD_CCT
-    freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
-#endif
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
+    }
 }
 // Different from init, the fini instrumentation will do the work similiarly as PAETT_inst_exit, so only fini should be inserted.
 void PAETT_inst_thread_fini(uint64_t key) {
@@ -380,14 +414,21 @@ void PAETT_inst_thread_fini(uint64_t key) {
     if(tid==0) --danger;
     // printf("thread_exit for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
     PAETT_inst_exit(key);
-#ifdef USE_FREQMOD_CCT
-    freqmod_cct::FUNCNAME(PAETT_inst_thread_fini)(key);
-#endif
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_inst_thread_fini)(key);
+    }
 }
 #endif
+static uint64_t cct_num = 0;
 void PAETT_inst_enter(uint64_t key) {
+    // if key==0, it indicates that this is .omp functions that force to insert a enter function
+    // and if currently it is not in parallel region, we should not handle this enter request.
+    if(!danger && key==0) return;
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_inst_enter)(key);
+    }
     if(danger || !initialized) return;
-    // printf("%lx %s\n", key, reinterpret_cast<char*>(key));
+    //printf("[DEBUG] %lx %s, %ld, %ld\n", key, reinterpret_cast<char*>(key), ++cct_num, (1L<<10));
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
     int tid = GET_THREADID;
@@ -409,9 +450,6 @@ void PAETT_inst_enter(uint64_t key) {
     }
     cur[tid]->data.cycle += e_cycles - g_cycles[tid];
     //cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode);
-#ifdef USE_FREQMOD_CCT
-    freqmod_cct::FUNCNAME(PAETT_inst_enter)(key);
-#endif
     cur[tid] = cur[tid]->getOrInsertChild(key);
     //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
     //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
@@ -441,6 +479,12 @@ void PAETT_inst_enter(uint64_t key) {
 }
 
 void PAETT_inst_exit(uint64_t key) {
+    // if key==0, it indicates that this is .omp functions that force to insert a exit function
+    // and if currently it is not in parallel region, we should not handle this exit request.
+    if(!danger && key==0) return;
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_inst_exit)(key);
+    }
     if(danger || !initialized) return;
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
@@ -480,11 +524,10 @@ redo:
         }
         assert(cur[tid]!=root[tid]);
         assert(cur[tid]->parent);
-#ifdef USE_FREQMOD_CCT
-        freqmod_cct::FUNCNAME(PAETT_inst_exit)(key);
-#endif
         cur[tid] = cur[tid]->parent;
     } else {
+        printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
+#ifdef DEBUG
 #ifdef ENABLE_INFO_LOG
         printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
         cur[tid]->printStack();
@@ -503,6 +546,8 @@ redo:
             cur[tid] = warn;
             goto redo;
         } else {
+            /* this debug information needs to be compiled without any frequency modification support 
+               (as freqmod will make key a integer, not a pointer to a string of debug info) */
             if(warn_time<10) {
                 printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, (cur[tid]->key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(cur[tid]->key)), key, (key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
                 cur[tid]->printStack();
@@ -510,11 +555,24 @@ redo:
             ++warn_time;
         }
 #endif
+#endif// DEBUG
     }
     if(collect_energy) {
         cur[tid]->data.last_energy = get_pkg_energy();
     }
     g_cycles[tid] = PAPI_get_real_usec();
+}
+
+void __generate_keymap(CallingContextLog* root) {
+    std::string prof_fn = profile_path+keymap_path;
+    FILE* fkey = fopen(prof_fn.c_str(), "w");
+    if(fkey!=NULL) {
+        printf("Wring keymap to %s\n",prof_fn.c_str());
+        CallingContextLog::fprintKeyString(fkey, root);
+        fclose(fkey);
+    } else {
+        printf("Could not open %s to log keymap info!\n",prof_fn.c_str());
+    }
 }
 
 void PAETT_inst_finalize() {
@@ -544,15 +602,7 @@ void PAETT_inst_finalize() {
     }
     if(detection_mode) {
         __PAETT_detect_finalize();
-        std::string prof_fn = profile_path+std::string(KEYMAP_FN".0");
-        FILE* fkey = fopen(prof_fn.c_str(), "w");
-        if(fkey!=NULL) {
-            printf("Wring keymap to %s\n",prof_fn.c_str());
-            CallingContextLog::fprintKeyString(fkey, root[0]);
-            fclose(fkey);
-        } else {
-            printf("Could not open %s to log keymap info!\n",prof_fn.c_str());
-        }
+        if(generate_keymap) __generate_keymap(root[0]);
         initialized = false;
         return ;
     }
@@ -605,25 +655,17 @@ void PAETT_inst_finalize() {
 #endif
     std::string prof_fn = profile_path+std::string(PAETT_PERF_INSTPROF_FN)+"."+std::to_string(tid);
     CallingContextLog::fprint(prof_fn.c_str(), root[tid]);
-#ifndef USE_FREQMOD_CCT
-    prof_fn = profile_path+std::string(KEYMAP_FN)+"."+std::to_string(tid);
-    FILE* fkey = fopen(prof_fn.c_str(), "w");
-    if(fkey!=NULL) {
-        printf("Wring keymap to %s\n",prof_fn.c_str());
-        CallingContextLog::fprintKeyString(fkey, root[tid]);
-        fclose(fkey);
-    } else {
-        printf("Could not open %s to log keymap info!\n",prof_fn.c_str());
+    if(generate_keymap) {
+        __generate_keymap(root[tid]);
     }
-#endif
 #ifdef MULTI_THREAD
     }
     fclose(fp);
 #endif
     __preallocate_fini();
-#ifdef USE_FREQMOD_CCT
-    freqmod_cct::FUNCNAME(PAETT_inst_finalize)();
-#endif
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_inst_finalize)();
+    }
     initialized = false;
     printf("=== finish ===\n"); fflush(stdout);
 }

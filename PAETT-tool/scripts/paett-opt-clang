@@ -1,2 +1,4 @@
 #!/bin/bash
-clang -g -Xclang -paett-freqmod -lpaett_freqmod -lx86_adapt -L`dirname $0`/../lib $@
+# for CCT-Aware frequency modification, we still use instrumentation pass with cct-aware freqmod library
+# clang -g -Xclang -paett-freqmod -lpaett_freqmod -lx86_adapt -L`dirname $0`/../lib $@
+clang -g -Xclang -paett-inst -lpaett_freqmod_cct -lx86_adapt -L`dirname $0`/../lib $@

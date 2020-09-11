@@ -17,7 +17,7 @@
 #define KEYMAP_FN "PAETT.keymap"
 
 // flang only as it uses llvm 7.0.0
-#define USE_OLD_LLVM
+// #define USE_OLD_LLVM
 #define CCT_ROOT_KEY "ROOT"
 #define CCT_INVALID_KEY "INVALID"
 #define CHECK_THRESHOLD 10

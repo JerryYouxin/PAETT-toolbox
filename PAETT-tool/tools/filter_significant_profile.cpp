@@ -79,6 +79,14 @@ void print_significant(CallingContextLog* root) {
     if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
         CallingContextLog* p = root;
         while(p!=NULL) {
+            if(keyMap[p->key]=="") {
+                printf("\nError: empty key string detected for key value %ld!\n",p->key);
+                while(p!=NULL) {
+                    printf("%s=>",keyMap[p->key].c_str());
+                    p = p->parent;
+                }
+                exit(1);
+            }
             printf("%s=>",keyMap[p->key].c_str());
             p = p->parent;
         }

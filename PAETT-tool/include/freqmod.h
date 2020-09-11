@@ -32,8 +32,4 @@ inline uint64_t MAKE_CORE_VALUE_FROM_FREQ(double freq) {
     return (uint64_t)(core+((freq>((double)core/10.0))?1:0)) * 1e5;
 }
 
-#define MAX_CORE_VALIE MAKE_CORE_VALUE_FROM_FREQ(2.4)
-#define MAX_UNCORE_VALIE MAKE_UNCORE_VALUE_BY_FREQ(25)
-#define MIN_CORE_VALIE MAKE_CORE_VALUE_FROM_FREQ(1.2)
-#define MIN_UNCORE_VALIE MAKE_UNCORE_VALUE_BY_FREQ(10)
 #endif

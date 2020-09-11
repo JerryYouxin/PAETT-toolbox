@@ -26,6 +26,7 @@ struct config_metric_struct {
     uint64_t uncore_latency_max;
     uint64_t uncore_latency_min;
     double uncore_latency_avg;
+    uint64_t ncpu;
 } config_metric;
 
 void generate_config() {
@@ -58,6 +59,7 @@ void generate_config() {
     fprintf(fp, "#define UNCORE_LATENCY_AVG %lf\n", config_metric.uncore_latency_avg);
     fprintf(fp, "#define LATENCY %ld\n", latency);
     fprintf(fp, "#define PRUNE_THRESHOLD %ld\n", max(factor*latency, alpha*config_metric.overhead));
+    fprintf(fp, "#define NCPU %ld\n", config_metric.ncpu);
     fprintf(fp, "#endif\n");
     fclose(fp);
 }
@@ -168,6 +170,10 @@ void detect_core_range() {
         found = s.find("CPU min MHz:");
         if (found!=std::string::npos) {
             sscanf(line, "CPU min MHz:           %lf", &fmin);
+        }
+        found = s.find("CPU(s):");
+        if (found!=std::string::npos) {
+            sscanf(line, "CPU(s):                %ld", &config_metric.ncpu);
         }
     }
     config_metric.core_min = (uint64_t)(fmin/100);

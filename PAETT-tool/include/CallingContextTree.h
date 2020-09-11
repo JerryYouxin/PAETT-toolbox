@@ -33,8 +33,9 @@ struct CallingContextTree {
     int last_loc;
 #endif
 #ifdef PREALLOCATE_CCT
-    //#define CCT_PREALLOCATE_SIZE (1L<<20)
-    #define CCT_PREALLOCATE_SIZE (1L<<10)
+    // 1 M
+    #define CCT_PREALLOCATE_SIZE (1L<<20)
+    //#define CCT_PREALLOCATE_SIZE (1L<<10)
     static CallingContextTree<Data_t>* get() {
         static int psize = 0;
         static CallingContextTree<Data_t> pnodes[CCT_PREALLOCATE_SIZE];
@@ -50,8 +51,12 @@ struct CallingContextTree {
         delete p;
     }
 #endif
-    void printStack() {
-        printf("  [0x%lx:%s]:",key,(key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
+    void printStack(bool keyIsString=false) {
+        if(keyIsString) {
+            printf("  [0x%lx:%s]:",key,(key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
+        } else {
+            printf("  [0x%lx]:",key);
+        }
         data.print();
         printf("\n");
         if(parent!=NULL) {
@@ -262,6 +267,10 @@ struct CallingContextTree {
                 fscanf(fp, "%c", &buff[0]);
             }
             keyMap[keyVal] = key;
+            if(key=="") {
+                printf("Warning: ");
+                printf("[%ld] %s\n",keyVal, key.c_str());
+            }
         }
     }
     static void readStringKey(FILE* fp, std::unordered_map<std::string, uint64_t>& keyMap) {
