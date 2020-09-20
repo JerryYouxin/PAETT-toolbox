@@ -79,9 +79,11 @@ namespace {
                 } else {
                     CCTFreqModEnabled = true;
                     uint64_t keyVal;
+                    int is_parallel;
                     char buff[101];
-                    // CCT Filter File Format: <keyVal> <debug_info>\n
+                    // CCT Filter File Format: <keyVal> <is_parallel> <debug_info>\n
                     while(EOF!=fscanf(fp, "%ld ", &keyVal)) {
+                        fscanf(fp, "%d ", &is_parallel);
                         fscanf(fp, "%100[^\n]", buff);
                         std::string key(buff);
                         fscanf(fp, "%c", &buff[0]);
@@ -91,7 +93,9 @@ namespace {
                             fscanf(fp, "%c", &buff[0]);
                         }
                         filterMap[key] = keyVal;
-                        // printf("%s %d %ld\n",(key+"\0").c_str(), key.c_str()[key.size()-1], keyVal);
+                        isParallelMap[key] = is_parallel;
+                        //printf("%s %d %ld\n",(key+"\0").c_str(), key.c_str()[key.size()-1], keyVal);
+                        // printf("%s %d %ld\n", (key+"\0").c_str(), is_parallel, keyVal);
                     }
                     fclose(fp);
                 }
@@ -202,6 +206,7 @@ namespace {
         std::vector<std::string> filter;
         bool filterEnabled;
         std::unordered_map<std::string, uint64_t> filterMap;
+        std::unordered_map<std::string, int> isParallelMap;
         bool CCTFreqModEnabled;
         Value* getInstKey(Module &M, LLVMContext &C, std::string debug_info, bool force=false) {
             if(utils.isInvalidString(debug_info)) return NULL;
@@ -273,22 +278,22 @@ namespace {
             LLVMContext &C = F->getContext();
             Value* key;
             if(Fname.find(".omp")!=std::string::npos) {
-                printf("****** Hanlding OMP function: %s (%s)\n",Fname.c_str(),utils.func2string(F).c_str());
-                key = getInstKey(M, C, utils.func2string(F), true);
-                printf("Value* key=%p\n",key);
-                assert(key!=NULL);
-                printf("Inserting Enter...\n");
-                Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                enterInst->insertBefore(&(*F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime()));
-                std::vector<Instruction*> list;
-                printf("Inserting Exit...\n");
-                getFunctionExitOps(F, list);
-                for(int i=0, n=list.size();i<n;++i) {
-                    printf("%d...\n", i);
-                    Instruction *ExitInst = CallInst::Create(hookExit,{key});
-                    ExitInst->insertBefore(list[i]);
-                }
-                printf("****** Finish Handling OMP function: %s (%s)\n", Fname.c_str(),utils.func2string(F).c_str());
+                // printf("****** Hanlding OMP function: %s (%s)\n",Fname.c_str(),utils.func2string(F).c_str());
+                // key = getInstKey(M, C, utils.func2string(F), true);
+                // printf("Value* key=%p\n",key);
+                // assert(key!=NULL);
+                // printf("Inserting Enter...\n");
+                // Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                // enterInst->insertBefore(&(*F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime()));
+                // std::vector<Instruction*> list;
+                // printf("Inserting Exit...\n");
+                // getFunctionExitOps(F, list);
+                // for(int i=0, n=list.size();i<n;++i) {
+                //     printf("%d...\n", i);
+                //     Instruction *ExitInst = CallInst::Create(hookExit,{key});
+                //     ExitInst->insertBefore(list[i]);
+                // }
+                // printf("****** Finish Handling OMP function: %s (%s)\n", Fname.c_str(),utils.func2string(F).c_str());
                 return ;
             }
             // LoopInfo must be obtained by LoopInfoWrapperPass
@@ -310,16 +315,28 @@ namespace {
             for(auto lkey : list) {
                 // First get context key of this loop
                 if(lkey->isInvalid()) continue; // the loop is no longer invalid, so skip it.
-                key = getInstKey(M, C, utils.loop2string(lkey)); // get key value associated to this loop's debug info
+                std::string lkeyStr = utils.loop2string(lkey);
+                key = getInstKey(M, C, lkeyStr); // get key value associated to this loop's debug info
                 if(key==NULL) continue; // invalid key
-                Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                enterInst->insertBefore(utils.getLoopInsertPrePoint(lkey));
+                int is_parallel = isParallelMap[lkeyStr];
+                if(is_parallel) {
+                    Instruction *threadInitInst = CallInst::Create(hookThreadInit,{key});
+                    threadInitInst->insertBefore(utils.getLoopInsertPrePoint(lkey));
+                } else {
+                    Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                    enterInst->insertBefore(utils.getLoopInsertPrePoint(lkey));
+                }
                 // create paett_inst_exit function call and insert it after exiting this loop
                 std::vector<Instruction*> insPos;
                 utils.getLoopInsertPostPoint(lkey, insPos);
                 for(int i=0, n=insPos.size();i<n;++i) {
-                    Instruction *ExitInst = CallInst::Create(hookExit,{key});
-                    ExitInst->insertBefore(insPos[i]);
+                    if(is_parallel) {
+                        Instruction *exitInst = CallInst::Create(hookThreadFini,{key});
+                        exitInst->insertBefore(insPos[i]);
+                    } else {
+                        Instruction *ExitInst = CallInst::Create(hookExit,{key});
+                        ExitInst->insertBefore(insPos[i]);
+                    }
                 }
             } // end iterate loops
             // Insert enter/exit pair for every function call to maintain calling context
@@ -347,41 +364,73 @@ namespace {
                             exitInst->insertAfter(op);
                         } else {
                             if(name.find("omp")!=std::string::npos || name.find("__kmpc")!=std::string::npos) continue;
-                            key = getInstKey(M, C, utils.ins2string(op));
+                            std::string keyStr = utils.ins2string(op);
+                            key = getInstKey(M, C, keyStr);
                             if(key==NULL) continue; // invalid key
-                            Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                            enterInst->insertBefore(op);
-                            Instruction *exitInst = CallInst::Create(hookExit,{key});
-                            exitInst->insertAfter(op);
+                            if(isParallelMap[keyStr]) {
+                                Instruction *threadInitInst = CallInst::Create(hookThreadInit,{key});
+                                threadInitInst->insertBefore(op);
+                                Instruction *exitInst = CallInst::Create(hookThreadFini,{key});
+                                exitInst->insertAfter(op);
+                            } else {
+                                Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                                enterInst->insertBefore(op);
+                                Instruction *exitInst = CallInst::Create(hookExit,{key});
+                                exitInst->insertAfter(op);
+                            }
                         }
                     }
 #ifndef USE_OLD_LLVM
                     if(auto *op=dyn_cast<CallBrInst>(&(*BI))) {
-                        key = getInstKey(M, C, utils.ins2string(op));
+                        std::string keyStr = utils.ins2string(op);
+                        key = getInstKey(M, C, keyStr);
                         if(key==NULL) continue; // invalid key
-                        Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                        enterInst->insertBefore(op);
+                        int is_parallel = isParallelMap[keyStr];
+                        if(is_parallel) {
+                            Instruction *threadInitInst = CallInst::Create(hookThreadInit,{key});
+                            threadInitInst->insertBefore(op);
+                        } else {
+                            Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                            enterInst->insertBefore(op);
+                        }
                         auto dest = op->getDefaultDest();
                         Instruction *exitInst = CallInst::Create(hookExit,{key});
                         exitInst->insertBefore(&(*(dest->getFirstNonPHIOrDbgOrLifetime())));
                         auto indirectDests = op->getIndirectDests();
                         for(auto suc : indirectDests) {
-                            Instruction *exitInst2 = CallInst::Create(hookExit,{key});
-                            exitInst2->insertBefore(&(*(suc->getFirstNonPHIOrDbgOrLifetime())));
+                            if(is_parallel) {
+                                Instruction *exitInst2 = CallInst::Create(hookThreadFini,{key});
+                                exitInst2->insertBefore(&(*(suc->getFirstNonPHIOrDbgOrLifetime())));
+                            } else {
+                                Instruction *exitInst2 = CallInst::Create(hookExit,{key});
+                                exitInst2->insertBefore(&(*(suc->getFirstNonPHIOrDbgOrLifetime())));
+                            }
                         }
                     }
 #endif
                     if(auto *op=dyn_cast<InvokeInst>(&(*BI))) {
-                        key = getInstKey(M, C, utils.ins2string(op));
+                        std::string keyStr = utils.ins2string(op);
+                        key = getInstKey(M, C, keyStr);
                         if(key==NULL) continue; // invalid key
-                        Instruction *enterInst = CallInst::Create(hookEnter,{key});
-                        enterInst->insertBefore(op);
-                        auto unwind = op->getUnwindDest();
-                        Instruction *exitInstU = CallInst::Create(hookExit,{key});
-                        exitInstU->insertBefore(&(*(unwind->getFirstInsertionPt()))); 
-                        auto normal = op->getNormalDest();
-                        Instruction *exitInstN = CallInst::Create(hookExit,{key});
-                        exitInstN->insertBefore(&(*(normal->getFirstInsertionPt())));
+                        if(isParallelMap[keyStr]) {
+                            Instruction *threadInitInst = CallInst::Create(hookThreadInit,{key});
+                            threadInitInst->insertBefore(op);
+                            auto unwind = op->getUnwindDest();
+                            Instruction *exitInstU = CallInst::Create(hookThreadFini,{key});
+                            exitInstU->insertBefore(&(*(unwind->getFirstInsertionPt()))); 
+                            auto normal = op->getNormalDest();
+                            Instruction *exitInstN = CallInst::Create(hookThreadFini,{key});
+                            exitInstN->insertBefore(&(*(normal->getFirstInsertionPt())));
+                        } else {
+                            Instruction *enterInst = CallInst::Create(hookEnter,{key});
+                            enterInst->insertBefore(op);
+                            auto unwind = op->getUnwindDest();
+                            Instruction *exitInstU = CallInst::Create(hookExit,{key});
+                            exitInstU->insertBefore(&(*(unwind->getFirstInsertionPt()))); 
+                            auto normal = op->getNormalDest();
+                            Instruction *exitInstN = CallInst::Create(hookExit,{key});
+                            exitInstN->insertBefore(&(*(normal->getFirstInsertionPt())));
+                        }
                     }
                 }
             }

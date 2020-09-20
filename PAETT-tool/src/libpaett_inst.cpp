@@ -116,6 +116,77 @@ static FILE* LOG;
 #define COUNT_FN ".paett_collect.cnt"
 #define METRIC_FN "metric.out"
 
+// TODO: check for how gdb detects the thread launching and replace the Linux-hacked method with more genereric method
+/**********************************************************
+ * hacking thread to detect external thread launching     *
+ * Read /proc/self/task directory and check the number of *
+ * contents (running threads). We consider a parallel     *
+ * region exists when multiple threads (>1) are detected. *
+ * The detected parallelization will be tagged into the   *
+ * current node of calling context tree (thread-safe).    *
+ **********************************************************/
+#include <sys/types.h>
+#include <dirent.h>
+#include <thread>
+#include <mutex>
+std::thread* parallel_monitor;
+std::mutex cct_mtx;
+bool __enable_parallel_detect = false;
+// detection and update need to atomic to enter/exit functions to avoid tagging to wrong node
+void __detectAndUpdate_parallel_tag() {
+    cct_mtx.lock();
+    // printf("root [%p]: active_thread = %ld\n", root[0], root[0]->data.active_thread);
+    // only try to detect and update when no other active threads are recorded
+    if(root[0]->data.active_thread<=1) {
+        DIR *proc_dir;
+        char dirname[]="/proc/self/task";
+        proc_dir = opendir(dirname);
+        if (proc_dir) {
+            /* /proc available, iterate through tasks... */
+            struct dirent *entry;
+            int tnum = 0;
+            while ((entry = readdir(proc_dir)) != NULL) {
+                if(entry->d_name[0] == '.')
+                    continue;
+                ++tnum;
+            }
+            // main thread (parent) + monitor thread (mine)
+            if(tnum>2) {
+                // printf("[key=%ld] detect thread num: %d\n", root[0]->key, tnum);
+                // other threads detected, it must be a parallel region, update
+                root[0]->data.active_thread = tnum-1; // except monitoring thread
+            }
+            closedir(proc_dir);
+        } else {
+            printf("[FETAL ERROR!!!!] Could not open directory %s!", dirname);
+            cct_mtx.unlock();
+            exit(1);
+        }
+    }
+    cct_mtx.unlock();
+}
+
+void __thread_monitor() {
+    printf("================ Thread monitor launched ==================\n");
+    while(__enable_parallel_detect) {
+        __detectAndUpdate_parallel_tag();
+        usleep(1); // 1 us
+    }
+}
+
+void __init_parallel_detect() {
+    printf("Init monitor threads for parallel detection\n");
+    __enable_parallel_detect = true;
+    parallel_monitor = new std::thread(__thread_monitor);
+}
+
+void __finalize_parallel_detect() {
+    __enable_parallel_detect = false;
+    parallel_monitor->join();
+    delete parallel_monitor;
+}
+/*********************************************/
+
 void PAETT_print() {
 #ifndef DISABLE_PAPI_SAMPLING
     printf("\n=========== USING PAPI & Instrumentation =============\n");
@@ -178,6 +249,7 @@ bool __PAETT_detect_init() {
         printf("INFO: Will Running in detection mode for significant region detection\n");
         detection_mode = true;
         generate_keymap= true;
+        __init_parallel_detect();
     } else if(detectResEnv) {
         FILE* fp = fopen(detectResEnv,"rb");
         if(fp==NULL) {
@@ -198,6 +270,7 @@ bool __PAETT_detect_init() {
 }
 
 void __PAETT_detect_finalize() {
+    __finalize_parallel_detect();
     pruneCCTWithThreshold(root[0], PRUNE_THRESHOLD, false/*don't delete the pruned nodes now*/);
     char* detectResEnv = getenv("PAETT_DETECT_RES_PATH");
     if(detectResEnv) {
@@ -384,12 +457,13 @@ void PAETT_inst_init() {
 #ifdef MULTI_THREAD
 // actually should be inserted after PAETT_inst_enter
 void PAETT_inst_thread_init(uint64_t key) {
+    // fprintf(stderr,"THREAD_INIT... initilzed=%d, tid=%d\n", initialized, GET_THREADID);
     if(!initialized) return;
     // int retval, i;
     // // CHECK_PAPI_ISOK(PAPI_stop(EventSet, counterVal));
     int tid = GET_THREADID;
     if(tid!=0) return;
-    // printf("thread_init for 0x%lx @ 0x%lx: tid=%d,danger=%d,initialized=%d\n",key,cur[tid]->key,tid,danger[tid],initialized); fflush(stdout);
+    // fprintf(stderr,"thread_init for 0x%lx @ 0x%lx: tid=%d,danger=%d,initialized=%d\n",key,cur[tid]->key,tid,danger[tid],initialized); fflush(stderr);
     assert(tid<MAX_THREAD && "Thread number exceeds preallocated size!!!");
     assert(cur[tid]);
     // if(cur[tid]->key!=key) {
@@ -403,6 +477,7 @@ void PAETT_inst_thread_init(uint64_t key) {
     // assert(cur[tid]->key==key);
     // Stop counting first to disable overflow
     cur[tid]->data.active_thread = std::max(cur[tid]->data.active_thread, (uint64_t)GET_ACTIVE_THREAD_NUM);
+    // printf("[key=%ld] active thread: %ld\n",cur[tid]->key,cur[tid]->data.active_thread); fflush(stdout);
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
     }
@@ -423,11 +498,11 @@ static uint64_t cct_num = 0;
 void PAETT_inst_enter(uint64_t key) {
     // if key==0, it indicates that this is .omp functions that force to insert a enter function
     // and if currently it is not in parallel region, we should not handle this enter request.
-    if(!danger && key==0) return;
+    if(!omp_in_parallel() && key==0) return;
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_enter)(key);
     }
-    if(danger || !initialized) return;
+    if(omp_in_parallel() || !initialized) return;
     //printf("[DEBUG] %lx %s, %ld, %ld\n", key, reinterpret_cast<char*>(key), ++cct_num, (1L<<10));
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
@@ -437,55 +512,61 @@ void PAETT_inst_enter(uint64_t key) {
     assert(tid>=0);
     assert(tid<MAX_THREAD);
     assert(cur[tid]);
-    // energy
-    if(collect_energy) {
-        double energy = get_pkg_energy();
-        double e = energy - cur[tid]->data.last_energy;
-        CallingContextLog* p = cur[tid];
-        while(p!=NULL) {
-            p->data.pkg_energy+= e;
-            RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
-            p = p->parent;
+    // cct mutex needs to be locked to avoid data race of current cct node with monitoring thread.
+    cct_mtx.lock();
+    {
+        // energy
+        if(collect_energy) {
+            double energy = get_pkg_energy();
+            double e = energy - cur[tid]->data.last_energy;
+            CallingContextLog* p = cur[tid];
+            while(p!=NULL) {
+                p->data.pkg_energy+= e;
+                RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
+                p = p->parent;
+            }
         }
-    }
-    cur[tid]->data.cycle += e_cycles - g_cycles[tid];
-    //cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode);
-    cur[tid] = cur[tid]->getOrInsertChild(key);
-    //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
-    //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
-    ++(cur[tid]->data.ncall);
-    if(detection_mode) {
-        cur[tid]->data.active_thread = 1;
-        cur[tid]->data.size = 0;
-        cur[tid]->data.eventData = NULL;
-    }
-    if(!detection_mode && cur[tid]->data.eventData==NULL && (!cur[tid]->pruned)) {
-        cur[tid]->data.active_thread = 1;
-        cur[tid]->data.size = eventNum;
-        if(eventNum>0)
-            cur[tid]->data.eventData = __allocate_eventLogSpace(tid,eventNum*2);//(uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
-        // memset(cur[tid]->data.eventData, 0, sizeof(uint64_t)*eventNum);
-    }
-    assert(cur[tid]);
-    // printf("PAPI Collect? %d %d\n",detection_mode, cur[tid]->pruned);
-    if(!detection_mode && (!cur[tid]->pruned)  && eventNum>0) {
-        // printf("Collect for PAPI %0xlx\n",key);
-        CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[tid]->data.eventData[eventNum])));
-    }
-    if(collect_energy) {
-        cur[tid]->data.last_energy = get_pkg_energy();
-    }
+        cur[tid]->data.cycle += e_cycles - g_cycles[tid];
+        //cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode);
+        cur[tid] = cur[tid]->getOrInsertChild(key);
+        //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
+        //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
+        ++(cur[tid]->data.ncall);
+        // if(detection_mode) {
+        //     cur[tid]->data.active_thread = 1;
+        //     cur[tid]->data.size = 0;
+        //     cur[tid]->data.eventData = NULL;
+        // }
+        if(!detection_mode && cur[tid]->data.eventData==NULL && (!cur[tid]->pruned)) {
+            cur[tid]->data.active_thread = 1;
+            cur[tid]->data.size = eventNum;
+            if(eventNum>0)
+                cur[tid]->data.eventData = __allocate_eventLogSpace(tid,eventNum*2);//(uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
+            // memset(cur[tid]->data.eventData, 0, sizeof(uint64_t)*eventNum);
+        }
+        assert(cur[tid]);
+        // printf("PAPI Collect? %d %d\n",detection_mode, cur[tid]->pruned);
+        if(!detection_mode && (!cur[tid]->pruned)  && eventNum>0) {
+            // printf("Collect for PAPI %0xlx\n",key);
+            CHECK_PAPI_ISOK(PAPI_read(EventSet, &(cur[tid]->data.eventData[eventNum])));
+        }
+        if(collect_energy) {
+            cur[tid]->data.last_energy = get_pkg_energy();
+        }
+    } // locking region
+    // release lock
+    cct_mtx.unlock();
     g_cycles[tid] = PAPI_get_real_usec();
 }
 
 void PAETT_inst_exit(uint64_t key) {
     // if key==0, it indicates that this is .omp functions that force to insert a exit function
     // and if currently it is not in parallel region, we should not handle this exit request.
-    if(!danger && key==0) return;
+    if(!omp_in_parallel() && key==0) return;
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_exit)(key);
     }
-    if(danger || !initialized) return;
+    if(omp_in_parallel() || !initialized) return;
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
     int tid = GET_THREADID;
@@ -493,73 +574,77 @@ void PAETT_inst_exit(uint64_t key) {
     INFO("Exit key=0x%lx\n",key);
     assert(tid>=0);
     assert(tid<MAX_THREAD);
-    // energy
-    if(collect_energy) {
-        double energy = get_pkg_energy();
-        double e = energy - cur[tid]->data.last_energy;
-        CallingContextLog* p = cur[tid];
-        while(p!=NULL) {
-            p->data.pkg_energy+= e;
-            RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
-            p = p->parent;
-        }
-    }
-    if(!detection_mode && (!cur[tid]->pruned) && eventNum>0) {
-        CHECK_PAPI_ISOK(PAPI_read(EventSet, counterVal));
-    }
-redo:
-    assert(cur[tid]);
-    if(cur[tid]->key==key) {
-        cur[tid]->data.cycle += e_cycles - g_cycles[tid];
-        if(!detection_mode && (!cur[tid]->pruned)) {
-            // Dynamically prune the context
-            if(cur[tid]->data.ncall>=CHECK_THRESHOLD && cur[tid]->data.cycle/cur[tid]->data.ncall < PRUNE_THRESHOLD) {
-                // cur[tid]->printStack();
-                cur[tid]->pruned = true;
-            }
-            uint64_t i;
-            for(i=0;i<eventNum;++i) {
-                cur[tid]->data.eventData[i] += counterVal[i] - cur[tid]->data.eventData[i+eventNum];
+    cct_mtx.lock();
+    {
+        // energy
+        if(collect_energy) {
+            double energy = get_pkg_energy();
+            double e = energy - cur[tid]->data.last_energy;
+            CallingContextLog* p = cur[tid];
+            while(p!=NULL) {
+                p->data.pkg_energy+= e;
+                RLOG("Enter: Update %lx PKG energy to %.6lf (+%.6lf) J\n", p->key, p->data.pkg_energy, e);
+                p = p->parent;
             }
         }
-        assert(cur[tid]!=root[tid]);
-        assert(cur[tid]->parent);
-        cur[tid] = cur[tid]->parent;
-    } else {
-        printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
-#ifdef DEBUG
-#ifdef ENABLE_INFO_LOG
-        printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
-        cur[tid]->printStack();
-        fflush(stdout);
-#endif
-#ifdef STOP_WHEN_WARN
-        if (auto warn = cur[tid]->findStack(key)) {
-            printf("Error: Something May wrong as this key appears as current context's parent:\n");
-            warn->printStack();
-            exit(-1);
+        if(!detection_mode && (!cur[tid]->pruned) && eventNum>0) {
+            CHECK_PAPI_ISOK(PAPI_read(EventSet, counterVal));
+        }
+    redo:
+        assert(cur[tid]);
+        if(cur[tid]->key==key) {
+            cur[tid]->data.cycle += e_cycles - g_cycles[tid];
+            if(!detection_mode && (!cur[tid]->pruned)) {
+                // Dynamically prune the context
+                if(cur[tid]->data.ncall>=CHECK_THRESHOLD && cur[tid]->data.cycle/cur[tid]->data.ncall < PRUNE_THRESHOLD) {
+                    // cur[tid]->printStack();
+                    cur[tid]->pruned = true;
+                }
+                uint64_t i;
+                for(i=0;i<eventNum;++i) {
+                    cur[tid]->data.eventData[i] += counterVal[i] - cur[tid]->data.eventData[i+eventNum];
+                }
+            }
+            assert(cur[tid]!=root[tid]);
+            assert(cur[tid]->parent);
+            cur[tid] = cur[tid]->parent;
         } else {
-            assert("Warning detected. Stop.");   
-        }
-#else
-        if (auto warn = cur[tid]->findStack(key)) {
-            cur[tid] = warn;
-            goto redo;
-        } else {
-            /* this debug information needs to be compiled without any frequency modification support 
-               (as freqmod will make key a integer, not a pointer to a string of debug info) */
-            if(warn_time<10) {
-                printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, (cur[tid]->key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(cur[tid]->key)), key, (key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
-                cur[tid]->printStack();
+            printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
+    #ifdef DEBUG
+    #ifdef ENABLE_INFO_LOG
+            printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
+            cur[tid]->printStack();
+            fflush(stdout);
+    #endif
+    #ifdef STOP_WHEN_WARN
+            if (auto warn = cur[tid]->findStack(key)) {
+                printf("Error: Something May wrong as this key appears as current context's parent:\n");
+                warn->printStack();
+                exit(-1);
+            } else {
+                assert("Warning detected. Stop.");   
             }
-            ++warn_time;
+    #else
+            if (auto warn = cur[tid]->findStack(key)) {
+                cur[tid] = warn;
+                goto redo;
+            } else {
+                /* this debug information needs to be compiled without any frequency modification support 
+                (as freqmod will make key a integer, not a pointer to a string of debug info) */
+                if(warn_time<10) {
+                    printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, (cur[tid]->key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(cur[tid]->key)), key, (key==CCT_ROOT_KEY?"ROOT":reinterpret_cast<char*>(key)));
+                    cur[tid]->printStack();
+                }
+                ++warn_time;
+            }
+    #endif
+    #endif// DEBUG
         }
-#endif
-#endif// DEBUG
-    }
-    if(collect_energy) {
-        cur[tid]->data.last_energy = get_pkg_energy();
-    }
+        if(collect_energy) {
+            cur[tid]->data.last_energy = get_pkg_energy();
+        }
+    } // locking region
+    cct_mtx.unlock();
     g_cycles[tid] = PAPI_get_real_usec();
 }
 

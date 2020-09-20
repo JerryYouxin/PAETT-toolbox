@@ -1,4 +1,5 @@
 #include "CallingContextTree.h"
+#define max(a, b) ((a)>(b)?(a):(b))
 
 void DataLog::fprint(FILE* fp) {
     uint64_t r;
@@ -61,6 +62,7 @@ void __mergePrunedNode(CallingContextLog* cur) {
             for(int i=0;i<cur->data.size;++i) {
                 cur->data.eventData[i] += CB->second->data.eventData[i];
             }
+            cur->data.active_thread = max(cur->data.active_thread, CB->second->data.active_thread);
         }
     }
 }
@@ -80,6 +82,7 @@ bool __pruneAllPrunedRegions(CallingContextLog* cur, bool erase_pruned) {
         for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
             CallingContextLog::ChildList::iterator key = *CB;
             cur->data.cycle += key->second->data.cycle;
+            cur->data.active_thread = max(cur->data.active_thread, key->second->data.active_thread);
             for(int i=0;i<cur->data.size;++i) {
                 cur->data.eventData[i] += key->second->data.eventData[i];
             }
@@ -109,6 +112,7 @@ bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool eras
             for(int i=0;i<cur->data.size;++i) {
                 cur->data.eventData[i] += key->second->data.eventData[i];
             }
+            cur->data.active_thread = max(cur->data.active_thread, key->second->data.active_thread);
             cur->children.erase(key);
         }
     }

@@ -98,7 +98,7 @@ void print_cct(CallingContextLog* root, bool print_data, string pre="") {
 void __generate_filter(FILE* fp, CallingContextLog* root) {
     if(!root->pruned) {
         // fprintf(fp, "%s\n", keyMap[root->key].c_str());
-        fprintf(fp, "%ld %s\n", root->key, keyMap[root->key].c_str());
+        fprintf(fp, "%ld %d %s\n", root->key, (root->data.active_thread>1)?1:0, keyMap[root->key].c_str());
     }
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
         __generate_filter(fp, CB->second);

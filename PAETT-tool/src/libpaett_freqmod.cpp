@@ -1,4 +1,3 @@
-#include <freqmod.h>
 #include <freqmod_API.h>
 #include <fcntl.h>
 #include <stdlib.h>

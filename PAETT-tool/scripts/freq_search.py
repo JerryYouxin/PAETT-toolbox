@@ -691,10 +691,12 @@ def hill_climbing(exe, cct, keymap_fn, max_iter=5, max_cct_num=5):
                 print("-- Region {0}: Iter: {1} / {2}".format(node.name, i, max_iter))
                 while cct.next_candidate():
                     E = exec_once(exe, cct, keymap_fn)
-                    energy = min([E, energy])
+                    if E<energy:
+                        energy = min([E, energy])
+                        generate_cct_frequency_commands(cct, "hill_climbing."+str(E))
                 cct.step()
                 print("-- INFO: Minimal Energy consumption: {0}".format(energy))
-                cct.print()
+                # cct.print()
                 generate_cct_frequency_commands(cct, "hill_climbing."+str(cn)+"."+str(i))
         # while True:
         #     if max_iter>0 and i > max_iter:
@@ -743,7 +745,7 @@ def grid_search(exe, cct, keymap_fn, grid_size=2):
     with open("grid_search.cct","w") as f:
         cct.save(f)
     cct.step()
-    cct.print()
+    # cct.print()
 
 def get_metric_name(pre, core, uncore, tnum):
     return "{0}metric.dat.{1}.{2}.{3}".format(pre,core,uncore,tnum)
@@ -755,6 +757,7 @@ def exec(exe, tnum, core, uncore, keymap_fn, out_dir='./', papi_events=[], cct_f
     if res_fn==None:
         res_fn = get_metric_name(out_dir,core, uncore, tnum)
     os.environ.pop('PAETT_DETECT_MODE', 'Not-found')
+    os.environ['KMP_AFFINITY']='granularity=fine,compact'
     if tnum>0:
         os.environ['OMP_NUM_THREADS'] = str(tnum)
     else:
@@ -815,7 +818,10 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, th
         res_fn = exec(exe, i, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
         # thread configuration must be consistant across all ccts
         if enable_consistant_thread:
+            # if consistant thread is enabled, we do not tune the thread number at runtime
+            # as it may cause application's undefined behaviors (e.g. segfault, undesired low utility)
             cct_tmp = load_cct_from_metrics(None, res_fn, i)
+            # set global settings as temporary return values, need to be cleared outside
             cct_tmp.thread = i
             energy_tmp = get_cct_energy(cct_tmp)
             if energy_tmp < energy:
@@ -831,7 +837,7 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, th
         #     cct.generate_frequency_commands(f, keyMap)
     return cct
 
-def exaustive_search(exe, cct, keymap_fn, enable_continue, enable_thread=False):
+def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_thread=False):
     out_dir = 'metrics/'
     if enable_continue:
         if not os.path.exists(out_dir):
@@ -841,7 +847,7 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, enable_thread=False):
         if os.path.exists(out_dir):
             shutil.rmtree(out_dir)
         os.mkdir(out_dir)
-    thread_list = [0]
+    thread_list = [thread_num]
     if enable_thread:
         thread_list = [ i for i in range(1,config.get_max_thread()) ]
         cct.reset_thread()
@@ -944,7 +950,8 @@ if __name__=="__main__":
     enable_consistant_thread = False
     enable_continue = False
     out_dir = "metrics"
-    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "keymap=","cct-src=","output=", "run", "exaustive", "hill-climbing", "grid-search", "grid-size=", "max-iter", "read-only", "thread-only", "tbegin", "tend", "tstep", "static", "consistant-thread", "continue"])
+    freq_command = None
+    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "keymap=","cct-src=","output=", "run=", "exaustive", "hill-climbing", "grid-search", "grid-size=", "max-iter=", "read-only", "thread-only", "tbegin=", "tend=", "tstep=", "static", "consistant-thread", "continue", "freqcomm="])
     for opt, arg in opts:
         if opt in ("-h", "--help"):
             usage()
@@ -986,6 +993,9 @@ if __name__=="__main__":
             thread_step = int(arg)
         elif opt == "--consistant-thread":
             enable_consistant_thread = True
+        elif opt=="--freqcomm":
+            freq_command = arg
+            use_thread_search = False
         else:
             print("Error: Unknown option: ", opt)
             usage()
@@ -1023,21 +1033,30 @@ if __name__=="__main__":
     keyMap = load_keyMap(keymap_fn)
     if use_thread_search:
         cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step, enable_consistant_thread)
+        if enable_consistant_thread:
+            thread_num = cct.thread
+        else:
+            thread_num = 0
+        cct.thread = 0
+        cct.saveTo("thread.cct")
         cct = load_thread_cct("thread.cct")
     else:
         if thread_only:
             print("Thread search will not be applied as thread info has already given: ", cct_src)
             print("[Info] Generate thread cct frequency command without any searching.")
-        # cct = load_thread_cct_freqcommand(cct_src, keymap_fn)
-        cct = load_thread_cct(cct_src)
+        if freq_command:
+            cct = load_thread_cct_freqcommand(freq_command, keymap_fn)
+        else:
+            cct = load_thread_cct(cct_src)
     if read_only:
         cct.optimize()
         cct.print()
     else:
-        if use_hill:
-            hill_climbing(exe, cct, keymap_fn, max_iter)
-        if use_grid:
-            grid_search(exe, cct, keymap_fn, grid_size)
-        if use_exaustive:
-            exaustive_search(exe, cct, keymap_fn, enable_continue)
+        if not thread_only:
+            if use_hill:
+                hill_climbing(exe, cct, keymap_fn, max_iter)
+            if use_grid:
+                grid_search(exe, cct, keymap_fn, grid_size)
+            if use_exaustive:
+                exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=thread_num)
         generate_cct_frequency_commands(cct, out_fn)

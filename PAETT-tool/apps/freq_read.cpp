@@ -1,8 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
-//extern uint64_t MAKE_UNCORE_VALUE_BY_FREQ(uint64_t freq);
 #include "freqmod.h"
-#include "freqmod_API.h"
 uint64_t core[28]={0};
 uint64_t uncore[28]={0};
 int main() {

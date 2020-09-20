@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include <freqmod.h>
 #include <freqmod_API.h>
 
 #include <string>
@@ -37,7 +36,7 @@ void generate_config() {
         exit(1);
     }
     const uint64_t alpha = 10;
-    const uint64_t factor = 2;
+    const uint64_t factor = 10;
     uint64_t latency = max(config_metric.core_latency_max, config_metric.uncore_latency_max);
     fprintf(fp, "#ifndef __CONFIG_H__\n");
     fprintf(fp, "#define __CONFIG_H__\n");

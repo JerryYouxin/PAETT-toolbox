@@ -1,2 +1,6 @@
 #!/bin/bash
-clang -g -Xclang -paett-inst -lx86_adapt -lx86_energy -lpapi -lpaett_inst -L`dirname $0`/../lib $@
+if [[ "$@" =~ "-c" || "$@" =~ "-MM" ]]; then
+  clang -g -Xclang -paett-inst $@
+else
+  clang -g -Xclang -paett-inst -lx86_adapt -lx86_energy -lpapi -lpaett_inst -L`dirname $0`/../lib $@
+fi
