@@ -24,10 +24,19 @@ struct FreqCommandData : DataBase {
 
 typedef CallingContextTree<FreqCommandData> CCTFreqCommand;
 
-// ascii encoding
-// <# of CCT region> <CCT> <core> <uncore> <thread>
-// CCT: path;to;region
-// region: a unique integer value
+/* .cct format example
+Enter 1 0 -1 ...
+  Enter 2 0 -1 ...
+    Enter 3 0 -1 ...
+        Enter 4 0 -1 ...
+            Enter 5 0 0 2400000 1560 18
+            Enter 5 1 1 ...
+            Enter 5 2 -1 ...
+            Exit
+        Exit
+    Exit
+Exit
+*/
 CCTFreqCommand* readCCTFreqCommand(const char* fn) {
     CCTFreqCommand* root = CCTFreqCommand::get();
     FILE* fp = fopen(fn, "r");
@@ -35,38 +44,75 @@ CCTFreqCommand* readCCTFreqCommand(const char* fn) {
         printf("CCT Frequency Command File: %s could not open!\n", fn);
         return NULL;
     }
-    uint64_t Nreg;
-    while(EOF!=fscanf(fp, "%ld", &Nreg)) {
-        CCTFreqCommand* p = root;
-        for(uint64_t i=0;i<Nreg;++i) {
+    CCTFreqCommand* p = root;
+    char command[10];
+    while(EOF!=fscanf(fp, "%s", command)) {
+        if(strcmp(command, "Enter")==0) {
             uint64_t key;
             fscanf(fp, "%ld", &key);
             p = p->getOrInsertChild(key);
+            fscanf(fp, "%ld", &(p->start_index));
+            fscanf(fp, "%ld", &(p->end_index));
+            // make sure the next get will insert a new node
+            p->cur_index = p->end_index;
+            fscanf(fp, "%ld", &(p->data.core));
+            fscanf(fp, "%ld", &(p->data.uncore));
+            fscanf(fp, "%ld", &(p->data.thread));
+        } else if(strcmp(command, "Exit")==0) {
+            p = p->parent;
+        } else {
+            printf("Unknown command from %s: %s\n", fn, command);
+            exit(-1);
         }
-        fscanf(fp, "%ld", &(p->data.core));
-        fscanf(fp, "%ld", &(p->data.uncore));
-        fscanf(fp, "%ld", &(p->data.thread));
     }
+    root->reset();
     // assert(root->children[0].first==-1);
     return root->children[0].second;
 }
 
-CCTFreqCommand* parseCCTFreqCommandDesc(uint64_t* cct_desc, uint64_t n) {
-    if(cct_desc==0 || n<=0) return NULL;
-    CCTFreqCommand* root = CCTFreqCommand::get();
-    uint64_t k=0;
-    while(k<n) {
-        uint64_t Nreg = cct_desc[k++];
-        CCTFreqCommand* p = root;
-        for(uint64_t i=0;i<Nreg;++i) {
-            uint64_t key = cct_desc[k++];
-            p = p->getOrInsertChild(key);
-        }
-        p->data.core = cct_desc[k++];
-        p->data.uncore = cct_desc[k++];
-        p->data.thread = cct_desc[k++];
-    }
-    // assert(root->children[0].first==-1);
-    printf("USE NEW\n");
-    return root->children[0].second;
-}
+// ascii encoding
+// <# of CCT region> <CCT> <core> <uncore> <thread>
+// CCT: path;to;region
+// region: a unique integer value
+// CCTFreqCommand* readCCTFreqCommand(const char* fn) {
+//     CCTFreqCommand* root = CCTFreqCommand::get();
+//     FILE* fp = fopen(fn, "r");
+//     if(fp==NULL) {
+//         printf("CCT Frequency Command File: %s could not open!\n", fn);
+//         return NULL;
+//     }
+//     uint64_t Nreg;
+//     while(EOF!=fscanf(fp, "%ld", &Nreg)) {
+//         CCTFreqCommand* p = root;
+//         for(uint64_t i=0;i<Nreg;++i) {
+//             uint64_t key;
+//             fscanf(fp, "%ld", &key);
+//             p = p->getOrInsertChild(key);
+//         }
+//         fscanf(fp, "%ld", &(p->data.core));
+//         fscanf(fp, "%ld", &(p->data.uncore));
+//         fscanf(fp, "%ld", &(p->data.thread));
+//     }
+//     // assert(root->children[0].first==-1);
+//     return root->children[0].second;
+// }
+
+// CCTFreqCommand* parseCCTFreqCommandDesc(uint64_t* cct_desc, uint64_t n) {
+//     if(cct_desc==0 || n<=0) return NULL;
+//     CCTFreqCommand* root = CCTFreqCommand::get();
+//     uint64_t k=0;
+//     while(k<n) {
+//         uint64_t Nreg = cct_desc[k++];
+//         CCTFreqCommand* p = root;
+//         for(uint64_t i=0;i<Nreg;++i) {
+//             uint64_t key = cct_desc[k++];
+//             p = p->getOrInsertChild(key);
+//         }
+//         p->data.core = cct_desc[k++];
+//         p->data.uncore = cct_desc[k++];
+//         p->data.thread = cct_desc[k++];
+//     }
+//     // assert(root->children[0].first==-1);
+//     printf("USE NEW\n");
+//     return root->children[0].second;
+// }

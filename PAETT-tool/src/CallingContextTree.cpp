@@ -50,8 +50,6 @@ void DataLog::clear() {
     // eventData=0;
 }
 
-static std::unordered_map<uint64_t, uint64_t> prunedRegion;
-
 void __mergePrunedNode(CallingContextLog* cur) {
     for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
         // make sure the children has already merged for pruned node
@@ -67,6 +65,8 @@ void __mergePrunedNode(CallingContextLog* cur) {
     }
 }
 
+#ifdef USE_OLD_PRUNE
+static std::unordered_map<uint64_t, uint64_t> prunedRegion;
 bool __pruneAllPrunedRegions(CallingContextLog* cur, bool erase_pruned) {
     bool prune = true;
     std::vector<CallingContextLog::ChildList::iterator> prunedChildren;
@@ -143,3 +143,80 @@ bool pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_
     }
     return pruned;
 }
+#else
+struct filterMetrics {
+    uint64_t cycle;
+    uint64_t ncall;
+};
+
+void __mergeAllRegionsFromCCT(CallingContextLog* cur, std::unordered_map<uint64_t, filterMetrics> &regionMetrics) {
+    auto it = regionMetrics.find(cur->key);
+    filterMetrics fm;
+    fm.cycle = 0;
+    fm.ncall = 0;
+    CallingContextLog* p = cur->__getFirstNode();
+    while(p!=p->next) {
+        fm.cycle += p->data.cycle;
+        fm.ncall += p->data.ncall;
+        p = p->next;
+    }
+    fm.cycle += p->data.cycle;
+    fm.ncall += p->data.ncall;
+    if(it==regionMetrics.end()) {
+        regionMetrics[cur->key] = fm;
+    } else {
+        regionMetrics[cur->key].cycle += fm.cycle;
+        regionMetrics[cur->key].ncall += fm.ncall;
+    }
+    for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
+        __mergeAllRegionsFromCCT(CB->second, regionMetrics);
+    }
+}
+
+bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_pruned, std::unordered_map<uint64_t, filterMetrics>& regionMetrics) {
+    auto it = regionMetrics.find(cur->key);
+    // if the merged metric is lower than threshold, this node may be pruned
+    bool prune = (it==regionMetrics.end() || ((double)it->second.cycle/(double)it->second.ncall)<threshold);
+    std::vector<CallingContextLog::ChildList::iterator> prunedChildren;
+    // if all chldren are pruned, this node may be pruned
+    for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
+        bool childPrune = __pruneCCTWithThreshold(CB->second, threshold, erase_pruned, regionMetrics);
+        if(childPrune && erase_pruned) {
+            prunedChildren.push_back(CB);
+        }
+        prune &= childPrune;
+    }
+    // actual prune work of the pruned subtree
+    if(erase_pruned) {
+        for(auto CB=prunedChildren.begin(), CE=prunedChildren.end();CB!=CE;++CB) {
+            CallingContextLog::ChildList::iterator key = *CB;
+            CallingContextLog* p = key->second->__getFirstNode();
+            while(p!=p->next) {
+                cur->data.cycle += p->data.cycle;
+                for(int i=0;i<cur->data.size;++i) {
+                    cur->data.eventData[i] += p->data.eventData[i];
+                }
+                cur->data.active_thread = max(cur->data.active_thread, p->data.active_thread);
+            }
+            cur->data.cycle += p->data.cycle;
+            for(int i=0;i<cur->data.size;++i) {
+                cur->data.eventData[i] += p->data.eventData[i];
+            }
+            cur->data.active_thread = max(cur->data.active_thread, p->data.active_thread);
+            cur->children.erase(key);
+        }
+    }
+    cur->pruned = cur->pruned || prune;
+    return prune;
+}
+
+bool pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_pruned) {
+    std::unordered_map<uint64_t, filterMetrics> regionMetrics;
+    __mergeAllRegionsFromCCT(cur, regionMetrics);
+    bool pruned = __pruneCCTWithThreshold(cur, threshold, erase_pruned, regionMetrics);
+    if(!erase_pruned) {
+        __mergePrunedNode(cur);
+    }
+    return pruned;
+}
+#endif

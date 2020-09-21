@@ -75,29 +75,64 @@ unknown:
     exit(1);
 }
 
-void print_significant(CallingContextLog* root) {
-    if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
-        CallingContextLog* p = root;
-        while(p!=NULL) {
-            if(keyMap[p->key]=="") {
-                printf("\nError: empty key string detected for key value %ld!\n",p->key);
-                while(p!=NULL) {
-                    printf("%s=>",keyMap[p->key].c_str());
-                    p = p->parent;
-                }
-                exit(1);
-            }
-            printf("%s=>",keyMap[p->key].c_str());
-            p = p->parent;
-        }
-        printf(";");
-        for(int i=0;i<root->data.size;++i) {
-            printf("%ld ", root->data.eventData[i]);
-        }
-        printf("%lf\n", root->data.pkg_energy);
+// void print_significant(CallingContextLog* root) {
+//     if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
+//         CallingContextLog* p = root;
+//         while(p!=NULL) {
+//             if(keyMap[p->key]=="") {
+//                 printf("\nError: empty key string detected for key value %ld!\n",p->key);
+//                 while(p!=NULL) {
+//                     printf("%s=>",keyMap[p->key].c_str());
+//                     p = p->parent;
+//                 }
+//                 exit(1);
+//             }
+//             printf("%s=>",keyMap[p->key].c_str());
+//             p = p->parent;
+//         }
+//         printf(";");
+//         for(int i=0;i<root->data.size;++i) {
+//             printf("%ld ", root->data.eventData[i]);
+//         }
+//         printf("%lf\n", root->data.pkg_energy);
+//     }
+//     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
+//         print_significant(CB->second);
+//     }
+// }
+void print_significant(CallingContextLog* root, std::string pre);
+void __print_node(CallingContextLog* p, std::string pre) {
+    printf("%sEnter;%s;%ld;%ld;",pre.c_str(),keyMap[p->key].c_str(),p->start_index,p->end_index);
+    for(int i=0;i<p->data.size;++i) {
+        printf("%ld ", p->data.eventData[i]);
     }
-    for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
-        print_significant(CB->second);
+    printf("%lf\n", p->data.pkg_energy);
+    for(auto CB=p->children.begin(), CE=p->children.end();CB!=CE;++CB) {
+        print_significant(CB->second, pre+"  ");
+    }
+    printf("%sExit\n",pre.c_str());
+}
+// print .dat format file to stdout
+void print_significant(CallingContextLog* root, std::string pre="") {
+    if(!root->pruned) {
+        CallingContextLog* p = root->__getFirstNode();
+        if(keyMap[p->key]=="") {
+            printf("\nError: empty key string detected for key value %ld!\n",p->key);
+            while(p!=NULL) {
+                printf("%s=>",keyMap[p->key].c_str());
+                p = p->parent;
+            }
+            exit(1);
+        }
+        while(p!=p->next) {
+            __print_node(p, pre);
+            p = p->next;
+        }
+        __print_node(p, pre);
+    } else {
+        for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
+            print_significant(CB->second, pre+"  ");
+        }
     }
 }
 
@@ -105,14 +140,18 @@ void mergeEventData(CallingContextLog* root) {
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
         mergeEventData(CB->second);
         for(int i=0;i<root->data.size;++i) {
-            root->data.eventData[i] += CB->second->data.eventData[i];
+            uint64_t e;
+            GET_TOTAL_DATA_VALUE(e, CB->second, eventData[i]);
+            root->data.eventData[i] += e;
         }
     }
 }
 
 void splitEnergyData(CallingContextLog* root) {
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
-        root->data.pkg_energy -= CB->second->data.pkg_energy;
+        uint64_t energy;
+        GET_TOTAL_DATA_VALUE(energy, CB->second, pkg_energy);
+        root->data.pkg_energy -= energy;
         splitEnergyData(CB->second);
     }
 }
@@ -120,7 +159,9 @@ void splitEnergyData(CallingContextLog* root) {
 double getTotalTime(CallingContextLog* root) {
     double time = 0;
     if(!root->pruned) {
-        time += root->data.cycle;
+        uint64_t t;
+        GET_TOTAL_DATA_VALUE(t, root, cycle);
+        time += t;
     }
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
         time += getTotalTime(CB->second);
@@ -130,14 +171,16 @@ double getTotalTime(CallingContextLog* root) {
 
 double getSignificantTime(CallingContextLog* root, double total_time) {
     uint64_t time = 0;
-    if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
-        time += root->data.cycle;
-        CallingContextLog* p = root;
-        while(p!=NULL) {
-            printf("%s=>",keyMap[p->key].c_str());
-            p = p->parent;
-        }
-        printf(";%.2lf\n", (double)root->data.cycle/total_time*100);
+    if(!root->pruned) {
+        uint64_t t;
+        GET_TOTAL_DATA_VALUE(t, root, cycle);
+        time += t;
+        // CallingContextLog* p = root;
+        // while(p!=NULL) {
+        //     printf("%s=>",keyMap[p->key].c_str());
+        //     p = p->parent;
+        // }
+        // printf(";%.2lf\n", (double)root->data.cycle/total_time*100);
     }
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
         time += getSignificantTime(CB->second, total_time);
@@ -156,10 +199,11 @@ int main(int argc, char* argv[]) {
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
     if(root==NULL) return 1;
     splitEnergyData(root);
-    pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
+    //pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
     if(options.print_coverage) {
         printf("Significant Coverage : %.2lf %%", getSignificantCoverage(root));
     } else {
+        root->reset();
         print_significant(root);
     }
     return 0;

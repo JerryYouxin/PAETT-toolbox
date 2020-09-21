@@ -527,8 +527,7 @@ void PAETT_inst_enter(uint64_t key) {
             }
         }
         cur[tid]->data.cycle += e_cycles - g_cycles[tid];
-        //cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode);
-        cur[tid] = cur[tid]->getOrInsertChild(key);
+        cur[tid] = cur[tid]->getOrInsertChild(key, true/*default self end*/);
         //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
         //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
         ++(cur[tid]->data.ncall);

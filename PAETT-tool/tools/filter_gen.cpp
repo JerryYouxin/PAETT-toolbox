@@ -81,17 +81,31 @@ unknown:
     exit(1);
 }
 
-void print_cct(CallingContextLog* root, bool print_data, string pre="") {
-    if(!root->pruned) {
-        printf("%s+ %s",pre.c_str(), keyMap[root->key].c_str());
-        if(print_data) {
-            printf(":");
-            root->data.print(stdout);
-        }
-        printf("\n");
+void print_cct(CallingContextLog* root, bool print_data, string pre="");
+void __print_cct_node(CallingContextLog* root, bool print_data, string pre) {
+    printf("%s+ %s [%ld, %ld]",pre.c_str(), keyMap[root->key].c_str(), root->start_index, root->end_index);
+    if(print_data) {
+        printf(":");
+        root->data.print(stdout);
     }
+    printf("\n");
     for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
         print_cct(CB->second, print_data, pre+"|  ");
+    }
+}
+
+void print_cct(CallingContextLog* root, bool print_data, string pre) {
+    if(!root->pruned) {
+        CallingContextLog* p = root->__getFirstNode();
+        while(p!=p->next) {
+            __print_cct_node(p, print_data, pre);
+            p = p->next;
+        }
+        __print_cct_node(p, print_data, pre);
+    } else {
+        for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
+            print_cct(CB->second, print_data, pre+"|  ");
+        }
     }
 }
 
@@ -120,7 +134,9 @@ int main(int argc, char* argv[]) {
     readKeyMap();
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
     if(root==NULL) return 1;
+    root->reset();
     pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
+    root->reset();
     print_cct(root, false);
     generate_filter(root, options.output.c_str());
     return 0;

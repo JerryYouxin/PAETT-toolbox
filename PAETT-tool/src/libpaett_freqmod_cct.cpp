@@ -76,10 +76,13 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
             }
             step = PAETT_get_ncpu() / PAETT_get_ndie();
             for(uint64_t i=0, k=0;i<tnum;i+=step, ++k) {
+                // printf("[DEBUG] TUNE WITH AFFINITY: %ld uncore to %ld\n",k, uncore);
                 PAETT_modUncoreFreq(k,uncore);
             }
+            // printf("step=%ld, i start=%d, ndie=%ld\n",step,__get_mydie(tnum-1)+1,PAETT_get_ndie());
             for(uint64_t i=__get_mydie(tnum-1)+1;i<PAETT_get_ndie();++i) {
-                PAETT_modUncoreFreq(i,MIN_CORE_VALIE);
+                // printf("[DEBUG] TUNE WITH AFFINITY: %ld uncore to %ld\n",i, MIN_UNCORE_VALIE);
+                PAETT_modUncoreFreq(i,MIN_UNCORE_VALIE);
             }
             break;
         // case SPREAD:
@@ -187,8 +190,10 @@ inline void __tuneTo(CCTFreqCommand* self) {
         __die = __get_mydie(__cpu);
         for(int i=0;i<PAETT_get_ndie();++i) {
             if(i==__die) {
+                printf("[DEBUG] Tuning %d uncore to %ld\n",i, uncore);
                 PAETT_modUncoreFreq(__die, uncore);
             } else {
+                printf("[DEBUG] Tuning %d uncore to %ld\n",i, MIN_UNCORE_VALIE);
                 PAETT_modUncoreFreq(i, MIN_UNCORE_VALIE);
             }
         }

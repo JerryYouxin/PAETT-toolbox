@@ -147,6 +147,12 @@ class CallingContextTree:
         self.__similiar_candidates = []
         self.__core_step = 2
         self.__uncore_step = 2
+        # Calling contexts
+        self.next = self
+        self.last = None
+        self.start_index = 0
+        self.end_index = -1
+        self.cur_index = 0
         # this is reserved for any additional message stored in a node
         self.additional = None
 
@@ -178,10 +184,76 @@ class CallingContextTree:
         for r in self.child.keys():
             self.child[r].update_if_min(energy)
     
-    def getOrInsertChild(self, key):
+    def __getOrInsertNode(self, key, start_index, end_index):
+        # print("^^^^^ ",self.cur_index)
+        self.cur_index += 1
+        if self.end_index!=-1 and self.cur_index > self.end_index:
+            #print(self, self.next==self)
+            #print(self.cur_index, self.next.end_index, self.next.start_index, self.start_index, self.end_index)
+            assert(self.next==self or (self.next!=self and self.end_index!=-1))
+            assert(self.next==self or self.cur_index <= self.next.end_index)
+            if self.cur_index >= self.next.start_index and self.cur_index <= self.next.end_index:
+                assert(start_index == self.next.start_index)
+                assert(end_index == self.next.end_index)
+                self.next.cur_index = self.cur_index
+                return self.next
+            else:
+                nxt = CallingContextTree(name=self.name, parent=self.parent)
+                self.next = nxt
+                nxt.last = self
+                nxt.cur_index = self.cur_index
+                nxt.start_index = start_index
+                nxt.end_index = end_index
+                if VERBOSE:
+                    print("[{0}] Inserting new node into linked list: start={1}, end={2}, cur={3}".format(self.name,start_index, end_index, self.cur_index))
+                    print("[Info:{3}] Last node of linked list: start={0}, end={1}, cur={2}".format(self.start_index, self.end_index, self.cur_index,self))
+                assert(start_index>self.end_index)
+                assert(start_index<=self.cur_index and (end_index==-1 or end_index>=self.cur_index))
+                # now all variables are initialized, we can now return
+                return nxt
+        if not (start_index==0 and end_index==-1):
+            # print(self, start_index, end_index, self.start_index, self.end_index)
+            assert(start_index == self.start_index)
+            assert(end_index == self.end_index)
+        return self
+
+    def getOrInsertChild(self, key, start_index=0, end_index=-1):
+        assert(end_index==-1 or start_index<=end_index)
+        # print("=-=-=-=-=-= before -=-=-=-=-=-=-")
+        # self.print()
+        # print("=-=-=-=-=-=-=-=-=-=-=---=-=-=-=-")
         if key not in self.child.keys():
             self.child[key] = CallingContextTree(key, self)
+            self.child[key].start_index = start_index
+            self.child[key].end_index = end_index
+            self.child[key].cur_index = start_index
+            assert(start_index==0)
+        else:
+            self.child[key] = self.child[key].__getOrInsertNode(key, start_index, end_index)
+        # print("=-=-=-=-=-=-=-=-=-=-=-=-")
+        # self.print()
+        # print("=-=-=-=-=-=-=-=-=-=-=---")
         return self.child[key]
+
+    def getFirstNode(self):
+        p=self
+        while p.last!=None:
+            p = p.last
+        return p
+
+    def reset_nodes(self):
+        p=self.getFirstNode()
+        while p.next!=p:
+            p.__reset_nodes()
+            p = p.next
+        p.__reset_nodes()
+
+    def __reset_nodes(self):
+        # print("$$$$",self, self.cur_index, self.start_index, self.end_index)
+        self.cur_index = self.start_index-1
+        for k in self.child.keys():
+            self.child[k].reset_nodes()
+            self.child[k] = self.child[k].getFirstNode()
 
     def fillMetric(self, core, uncore, energy, method="add"):
         assert(core!=0 and uncore!=0)
@@ -380,64 +452,113 @@ class CallingContextTree:
         for r in self.child.keys():
             self.child[r].save(file)
     
-    def __saveTo(self, file, pre=[]):
-        if self.core!=-1 and (not self.pruned):
-            key = self.name
-            for k in pre:
-                file.write(str(k)+";")
-            file.write("{0};{1} {2} {3}\n".format(key, self.core, self.uncore, self.thread))
-            for r in self.child.keys():
-                self.child[r].__saveTo(file, pre+[key])
+    def __saveNodeTo(self, file, pre=""):
+        key = self.name
+        file.write(pre+"Enter;{0};{1};{2};{3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(self.core), make_uncore(self.uncore), self.thread))
+        for r in self.child.keys():
+            self.child[r].__saveTo(file, pre+'  ')
+        file.write(pre+"Exit\n")
+
+    def __saveTo(self, file, pre=""):
+        p = self
+        while p!=p.next:
+            p.__saveNodeTo(file, pre)
+            p = p.next
+        p.__saveNodeTo(file, pre)
+            
+        # if self.core!=-1 and (not self.pruned):
+        #     key = self.name
+        #     for k in pre:
+        #         file.write(str(k)+";")
+        #     file.write("{0};{1} {2} {3}\n".format(key, self.core, self.uncore, self.thread))
+        #     for r in self.child.keys():
+        #         self.child[r].__saveTo(file, pre+[key])
 
     def saveTo(self, file_name):
+        p = self
+        while 'ROOT' in p.child.keys():
+            p = p.child['ROOT']
         with open(file_name, "w", newline="") as file:
-            self.__saveTo(file)
+            p.__saveTo(file)
 
     def loadFrom(self, file_name):
+        self.reset_nodes()
+        p = self
         with open(file_name, "r") as f:
             for line in f:
                 cont = line.split(";")
-                keys = cont[:-1]
-                vals = cont[-1].split(" ")
-                p = self
-                assert(keys[0]=="ROOT")
-                for k in keys[1:]:
+                command = cont[0].strip()
+                if command=="Enter":
+                    key     = cont[1]
+                    start   = int(cont[2])
+                    end     = int(cont[3])
+                    # UNSIGNED_INT_MAX is -1
+                    if end == 4294967295:
+                        end = -1
+                    vals = cont[-1].split(" ")
                     # TODO: Need to figure out why empty string is generated from profile
-                    if(k==''):
+                    if(key==''):
                         continue
-                    p = p.getOrInsertChild(k)
-                p.core = int(vals[0])
-                p.uncore = int(vals[1])
-                p.thread = int(vals[2])
+                    p = p.getOrInsertChild(key, start, end)
+                    p.core = int(vals[0])
+                    p.uncore = int(vals[1])
+                    p.thread = int(vals[2])
+                elif command=="Exit":
+                    p = p.parent
+                else:
+                    print("Error: Unknown command '{0}' in file: {1}".format(command, file_name))
+                    exit(1)
+        self.reset_nodes()
 
-    def generate_frequency_commands(self, file, keyMap, pre=[]):
-        if self.core!=-1 and (not self.pruned):
-            # key = len(keyMap.keys())
-            # if self.name in keyMap.keys():
-            #     key = keyMap[self.name]
-            # else:
-            #     keyMap[self.name] = key
-            print(self.name)
-            key = keyMap[self.name]
-            file.write(str(len(pre)+1)+" ")
-            for k in pre:
-                file.write(str(k)+" ")
-            file.write("{0} {1} {2} {3}\n".format(key, make_core(self.core), make_uncore(self.uncore), self.thread))
-            for r in self.child.keys():
-                self.child[r].generate_frequency_commands(file, keyMap, pre+[key])
+    def __generate_frequency_commands(self, file, keyMap, pre):
+        key = keyMap[self.name]
+        file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(self.core), make_uncore(self.uncore), self.thread))
+        for r in self.child.keys():
+            self.child[r].generate_frequency_commands(file, keyMap, pre+'  ')
+        file.write(pre+"Exit\n")
+
+    def generate_frequency_commands(self, file, keyMap, pre=""):
+            # if self.core!=-1 and (not self.pruned):
+            #     print(self.name)
+        p = self
+        while p!=p.next:
+            p.__generate_frequency_commands(file, keyMap, pre)
+            p = p.next
+        p.__generate_frequency_commands(file, keyMap, pre)
+
+    def __generate_frequency_commands_with(self, file, keyMap, core, uncore, thread, pre=""):
+        key = keyMap[self.name]
+        file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(core), make_uncore(uncore), thread))
+        for r in self.child.keys():
+            self.child[r].generate_frequency_commands_with(file, keyMap, core, uncore, thread, pre+'  ')
+        file.write(pre+"Exit\n")
+
+    def generate_frequency_commands_with(self, file, keyMap, core, uncore, thread, pre=""):
+        p = self
+        while p!=p.next:
+            p.__generate_frequency_commands_with(file, keyMap, core, uncore, thread, pre)
+            p = p.next
+        p.__generate_frequency_commands_with(file, keyMap, core, uncore, thread, pre)
 
     def __str__(self):
         return self.name
 
-    def print(self, pre=""):
+    def __print(self, pre):
         comments = ""
         if self.tuning:
             comments += "[tuning]"
         if self.pruned:
             comments += "[pruned]"
-        print(pre+"+ ", self.name, (self.core, self.uncore, self.thread), comments )
+        print(pre+"+ ", self.name, [self.start_index, self.end_index, self.cur_index], (self.core, self.uncore, self.thread), comments )
         for r in self.child.keys():
             self.child[r].print(pre+"|   ")
+    
+    def print(self, pre=""):
+        p=self.getFirstNode()
+        while(p!=p.next):
+            p.__print(pre)
+            p=p.next
+        p.__print(pre)
 
     def optimize(self, lock=False):
         may_prune = True
@@ -550,10 +671,16 @@ def load_thread_cct(cct_fn):
 def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
     if cct is None:
         cct = CallingContextTree()
+    cct.reset_nodes()
+    # print('=--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=')
+    # cct.print()
+    # print('=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-')
     if core<0:
         core = config.get_max_core()
     if uncore<0:
         uncore = config.get_max_uncore()
+    # pointer of calling context tree used for iteration
+    p = cct
     updated = False
     with open(metric_fn,"r") as f:
         for line in f:
@@ -562,35 +689,45 @@ def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
                 continue
             record = []
             cont = line.split(';')
-            key = cont[0]
-            cont = cont[1].split(' ')
-            for s in cont:
-                record.append(float(s))
-            metric = record[:-1]
-            energy = record[-1]
-            # split to regions, and ignore the last two (ROOT, empty)
-            keys = key.split('=>')[:-2]
-            keys.reverse()
-            p = cct
-            for k in keys:
-                if k=='':
-                    print("Error: ", keys)
+            command = cont[0].strip()
+            if command=="Enter":
+                key   = cont[1]
+                start = int(cont[2])
+                end   = int(cont[3])
+                # UNSIGNED_INT_MAX is -1
+                if end == 4294967295:
+                    end = -1
+                cont  = cont[4].split(' ')
+                for s in cont:
+                    record.append(float(s))
+                metric = record[:-1]
+                energy = record[-1]
+                if key=='':
+                    print("Error: ", key)
                     print("-- line=\"{0}\"".format(line))
                     print("-- key=\"{0}\"".format(key))
                     exit(1)
-                p = p.getOrInsertChild(k)
-            if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
-                p.additional = (metric, energy)
-                if thread>0:
-                    p.thread = thread
-                p.core = core
-                p.uncore = uncore
-                updated = True
+                p = p.getOrInsertChild(key, start, end)
+                # print(p, start, p.start_index, end, p.end_index)
+                assert(start==p.start_index)
+                assert(end==p.end_index)
+                if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
+                    p.additional = (metric, energy)
+                    if thread>0:
+                        p.thread = thread
+                    p.core = core
+                    p.uncore = uncore
+                    updated = True
+            elif command=="Exit":
+                p = p.parent
+            else:
+                print("Error: Unknown command '{0}' in frequency command file: {1}".format(command, metric_fn))
+                exit(1)
     if updated:
         cct.print()
     return cct
 
-def get_cct_energy(cct):
+def __get_cct_energy(cct):
     tot_energy = 0
     if cct.additional is not None:
         tot_energy += cct.additional[1]
@@ -598,7 +735,18 @@ def get_cct_energy(cct):
         tot_energy += get_cct_energy(cct.child[r])
     return tot_energy
 
+def get_cct_energy(cct):
+    tot_energy = 0
+    p = cct.getFirstNode()
+    while p!=p.next:
+        tot_energy += __get_cct_energy(p)
+        p = p.next
+    tot_energy += __get_cct_energy(p)
+    return tot_energy
+
 def generate_cct_frequency_commands(cct, name):
+    while 'ROOT' in cct.child.keys():
+        cct = cct.child['ROOT']
     cct.optimize() # optimize CCT to generate optimized commands
     if VERBOSE:
         print("------------ GENERATED CCT TO {0} -----------".format(name+".cct"))
@@ -800,22 +948,35 @@ def exec(exe, tnum, core, uncore, keymap_fn, out_dir='./', papi_events=[], cct_f
     return res_fn
 
 # [start, end], with step size *step*
-def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, thread_res_fn="thread.cct"):
+def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, enable_continue, thread_res_fn="thread.cct"):
     # temporary metric output files
     out_dir = 'thread_metrics/'
-    if os.path.exists(out_dir):
-        shutil.rmtree(out_dir)
-    os.mkdir(out_dir)
+    if enable_continue:
+        if not os.path.exists(out_dir):
+            print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
+            enable_continue = False
+            os.mkdir(out_dir)
+    else:
+        if os.path.exists(out_dir):
+            shutil.rmtree(out_dir)
+        os.mkdir(out_dir)
     # add single thread execution as baseline
     print("Running with 1 Thread")
-    res_fn = exec(exe, 1, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
+    res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), 1)
+    if not (enable_continue or os.path.exists(res_fn)):
+        res_fn = exec(exe, 1, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
     cct = load_cct_from_metrics(None, res_fn, 1)
     energy = get_cct_energy(cct)
     if start==1:
         start = start + step
     for i in range(start, end+1, step):
         print("Running with {0} Thread".format(i))
-        res_fn = exec(exe, i, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
+        res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), i)
+        if not (enable_continue or os.path.exists(res_fn)):
+            tmp_cct_fn = "frequency-tmp.cct"
+            with open(tmp_cct_fn, 'w') as f:
+                cct.generate_frequency_commands_with(f, keyMap, config.get_max_core(), config.get_max_uncore(), i)
+            res_fn = exec(exe, i, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, cct_fn=tmp_cct_fn)
         # thread configuration must be consistant across all ccts
         if enable_consistant_thread:
             # if consistant thread is enabled, we do not tune the thread number at runtime
@@ -830,6 +991,7 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, th
                 energy = energy_tmp
         else:
             cct = load_cct_from_metrics(cct, res_fn, i)
+    cct.reset_nodes()
     if thread_res_fn is not None:
         print("Save thread optimized cct to ", thread_res_fn)
         cct.saveTo(thread_res_fn)
@@ -843,6 +1005,7 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_
         if not os.path.exists(out_dir):
             print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
             enable_continue = False
+            os.mkdir(out_dir)
     else:
         if os.path.exists(out_dir):
             shutil.rmtree(out_dir)
@@ -852,7 +1015,7 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_
         thread_list = [ i for i in range(1,config.get_max_thread()) ]
         cct.reset_thread()
     cct.reset_freq()
-    cct.optimize()
+    # cct.optimize()
     tmp_cct_fn = "frequency_command.tmp"
     tmp_cct_fn = generate_cct_frequency_commands(cct, tmp_cct_fn)
     for t in thread_list:
@@ -860,9 +1023,11 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_
             for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
                 print("-- [Info] Trying core={0}, uncore={1}, thread={2}".format(c, uc, t))
                 res_fn = get_metric_name(out_dir, c, uc, t)
-                if not (enable_continue or os.path.exists(res_fn)):
+                if not (enable_continue and os.path.exists(res_fn)):
                     res_fn = exec(exe, t, c, uc, keymap_fn, out_dir=out_dir, cct_fn=tmp_cct_fn, res_fn=res_fn)
+                # cct.print()
                 cct = load_cct_from_metrics(cct, res_fn, t, c, uc)
+    cct.reset_nodes()
     cct.optimize()
     if VERBOSE:
         print("-- [INFO] Exaustive search finished. Final CCT frequency command: ")
@@ -1032,12 +1197,12 @@ if __name__=="__main__":
         print("[Info] Use Exaustive searching")
     keyMap = load_keyMap(keymap_fn)
     if use_thread_search:
-        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step, enable_consistant_thread)
+        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step, enable_consistant_thread, enable_continue)
         if enable_consistant_thread:
             thread_num = cct.thread
         else:
             thread_num = 0
-        cct.thread = 0
+        # cct.thread = 0
         cct.saveTo("thread.cct")
         cct = load_thread_cct("thread.cct")
     else:
@@ -1048,6 +1213,11 @@ if __name__=="__main__":
             cct = load_thread_cct_freqcommand(freq_command, keymap_fn)
         else:
             cct = load_thread_cct(cct_src)
+        if enable_consistant_thread:
+            thread_num = cct.child['ROOT'].thread
+        else:
+            thread_num = 0
+    print("[INFO] Thread num=",thread_num)
     if read_only:
         cct.optimize()
         cct.print()

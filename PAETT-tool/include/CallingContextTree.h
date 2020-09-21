@@ -12,6 +12,12 @@
 #define PREALLOCATE_CCT
 #define LOCAL_SEARCH
 
+#define GET_TOTAL_DATA_VALUE(result, root, var) do {\
+    result=0; auto p=root->__getFirstNode(); \
+    while(p!=p->next) { result += p->data. var; p=p->next; } \
+    result+=p->data. var; \
+} while(0)
+
 #include "common.h"
 // actually, this indicates main function (entry function of a program)
 #define CCT_ROOT_KEY -1
@@ -28,11 +34,32 @@ struct CallingContextTree {
     Data_t data;
     CallingContextTree<Data_t>* parent;
     ChildList children;
+    // for different calling contexts with same keys, we construct a linked list and move forward when a new call is detected
+    // Note that the linked list is garanteed to be sorted, so we only need to move forward without any searching
+    CallingContextTree<Data_t>* next;
+    CallingContextTree<Data_t>* last;
+    // this node handles start_index-th call to end_index-th call, useful to aggragate similiar nodes to save limited preallocated nodes
+    uint32_t start_index;
+    uint32_t end_index; // -1 indicates infinite
+    uint32_t cur_index; // current index handle
+    // useful flags
     bool pruned;
 #ifdef LOCAL_SEARCH
     int last_loc;
 #endif
+    ~CallingContextTree() { clear(); }
 #ifdef PREALLOCATE_CCT
+    CallingContextTree() { 
+        pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); children.reserve(16); 
+        // by default, the cct node's next is still hisself, but last node is NULL to indicate it is the first node
+        next = this; last = NULL;
+        start_index = 0;
+        end_index = (uint32_t)-1; // 0xffffffff
+        cur_index = 0;
+#ifdef LOCAL_SEARCH
+        last_loc=0;
+#endif
+    }
     // 1 M
     #define CCT_PREALLOCATE_SIZE (1L<<20)
     //#define CCT_PREALLOCATE_SIZE (1L<<10)
@@ -44,6 +71,17 @@ struct CallingContextTree {
     }
     static void free(CallingContextTree<Data_t>*) {}
 #else
+    CallingContextTree() { 
+        pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); 
+        // by default, the cct node's next is still hisself, but last node is NULL to indicate it is the first node
+        next = this; last = NULL;
+        start_index = 0;
+        end_index = -1;
+        cur_index = 0;
+#ifdef LOCAL_SEARCH
+        last_loc=0;
+#endif    
+    }
     static CallingContextTree<Data_t>* get() {
         return new CallingContextTree<Data_t>();
     }
@@ -85,7 +123,53 @@ struct CallingContextTree {
         children[c->key] = c; c->parent = this;
     }
 #endif
-    CallingContextTree<Data_t>* getOrInsertChild(uint64_t key, bool default_pruned=false) {
+    CallingContextTree<Data_t>* __getFirstNode() {
+        CallingContextTree<Data_t>* p=this;
+        while(p->last!=NULL) p = p->last;
+        return p;
+    }
+    void __reset() {
+        cur_index = start_index;
+        for(auto CB=children.begin(), CE=children.end();CB!=CE;++CB) {
+            CB->second->reset();
+            CB->second = CB->second->__getFirstNode();
+        }
+    }
+    // reset the linked list to header
+    void reset() {
+        CallingContextTree<Data_t>* p = __getFirstNode();
+        while(p!=p->next) {
+            p->__reset();
+            p = p->next;
+        }
+        p->__reset();
+    }
+    CallingContextTree<Data_t>* __getOrInsertNode(CallingContextTree<Data_t>* child, bool default_self_end) {
+        child->cur_index++;
+        if(child->cur_index > child->end_index) {
+            // check to detect bug
+            assert(child->next==child || child->cur_index <= child->next->end_index);
+            if(child->cur_index >= child->next->start_index && child->cur_index <= child->next->end_index) {
+                return child->next;
+            } else {
+                CallingContextTree<Data_t>* next = CallingContextTree<Data_t>::get();
+                child->next = next;
+                next->last = child;
+                next->key = child->key;
+                next->parent = child->parent;
+                next->pruned = false;
+                next->cur_index = child->cur_index;
+                next->start_index = child->cur_index;
+                // if default_self_end is set, this new node only handles single iteration
+                if(default_self_end) next->end_index = next->start_index;
+                // else, we use default infinite setting, where this node will handle all following iteration
+                // now all variables are initialized, we can now return
+                return next;
+            }
+        }
+        return child;
+    }
+    CallingContextTree<Data_t>* getOrInsertChild(uint64_t key, bool default_self_end=false) {
 #ifdef PREALLOCATE_CCT
         auto ic=children.end();
         assert(children.size()>=0);
@@ -95,6 +179,7 @@ struct CallingContextTree {
             do {
                 if(children[i].first==key) {
                     last_loc = i;
+                    children[i].second = __getOrInsertNode(children[i].second, default_self_end);
                     return children[i].second;
                 }
                 i = (i+1) % children.size();
@@ -108,10 +193,14 @@ struct CallingContextTree {
 #else
         auto ic = children.find(key);
 #endif
-        if(ic!=children.end()) return ic->second;
+        if(ic!=children.end()) {
+            ic->second = __getOrInsertNode(ic->second, default_self_end);
+            return ic->second;
+        }
         // This is a new key. Insert a new children
         CallingContextTree<Data_t>* c = CallingContextTree<Data_t>::get();// new CallingContextTree<Data_t>();
-        c->key=key; c->pruned = default_pruned;
+        c->key=key; c->pruned = false;
+        if(default_self_end) c->end_index = c->start_index;
         addChild(c);
         return c;
     }
@@ -185,19 +274,32 @@ struct CallingContextTree {
     }
     static CallingContextTree<Data_t>* read(FILE* fp, uint64_t key=CCT_ROOT_KEY) {
         const uint64_t ONE = 1; int r;
-        CallingContextTree<Data_t>* root=CallingContextTree<Data_t>::get();//new CallingContextTree<Data_t>();
-        root->key = key;
-        // read data through fread interface
-        SAFE_READ(&(root->pruned), sizeof(bool), ONE, fp);
-        root->data.read(fp);
-        // read from binary file
-        uint64_t size,val, i;
-        SAFE_READ(&size, sizeof(uint64_t), ONE, fp);
-        for(i=0;i<size;++i) {
-            SAFE_READ(&val, sizeof(uint64_t), ONE, fp);
-            root->addChild(read(fp, val));
+        CallingContextTree<Data_t>* start;
+        CallingContextTree<Data_t>* last=NULL;
+        uint32_t num;
+        SAFE_READ(&num, sizeof(uint32_t), ONE, fp);
+        for(uint32_t j=0;j<num;++j) {
+            CallingContextTree<Data_t>* root=CallingContextTree<Data_t>::get();
+            if(j==0) start = root;
+            root->key = key;
+            root->last = last;
+            if(last) last->next = root;
+            // read data through fread interface
+            SAFE_READ(&(root->pruned), sizeof(bool), ONE, fp);
+            SAFE_READ(&(root->start_index), sizeof(uint32_t), ONE, fp);
+            SAFE_READ(&(root->end_index), sizeof(uint32_t), ONE, fp);
+            root->cur_index = root->start_index;
+            root->data.read(fp);
+            // read from binary file
+            uint64_t size,val, i;
+            SAFE_READ(&size, sizeof(uint64_t), ONE, fp);
+            for(i=0;i<size;++i) {
+                SAFE_READ(&val, sizeof(uint64_t), ONE, fp);
+                root->addChild(read(fp, val));
+            }
+            last = root;
         }
-        return root;
+        return start;
     }
     static CallingContextTree<Data_t>* read(const char* fn) {
         FILE* fp = fopen(fn, "rb");
@@ -209,7 +311,7 @@ struct CallingContextTree {
         fclose(fp);
         return root;
     }
-    static void print(CallingContextTree<Data_t>* root, FILE* fp=stdout, std::string pre="") {
+    static void __printNode(CallingContextTree<Data_t>* root, FILE* fp=stdout, std::string pre="") {
         fprintf(fp,"%s0x%lx:",pre.c_str(),root->key);
         root->data.print(fp);
         fprintf(fp,"\n");
@@ -217,27 +319,21 @@ struct CallingContextTree {
             print(CB->second, fp, pre+"=>");
         }
     }
-    ~CallingContextTree() { clear(); }
-#ifdef PREALLOCATE_CCT
-    CallingContextTree() { 
-        pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); children.reserve(16); 
-#ifdef LOCAL_SEARCH
-        last_loc=0;
-#endif    
+    static void print(CallingContextTree<Data_t>* root, FILE* fp=stdout, std::string pre="") {
+        CallingContextTree<Data_t>* p = root->__getFirstNode();
+        while(p!=p->next) {
+            __printNode(p,fp,pre);
+            p = p->next;
+        }
+        __printNode(p,fp,pre);
     }
-#else
-    CallingContextTree() { 
-        pruned=false; parent=NULL; key=CCT_ROOT_KEY; data.clear(); 
-#ifdef LOCAL_SEARCH
-        last_loc=0;
-#endif    
-    }
-#endif
-    static void fprint(FILE* fp, CallingContextTree<Data_t>* root) {
+    static void __fprint_linkedNode(FILE* fp, CallingContextTree<Data_t>* root) {
         const uint64_t ONE = 1;
         int r;
         // write data through fprint interface
         SAFE_WRITE(&(root->pruned), sizeof(bool), ONE, fp);
+        SAFE_WRITE(&(root->start_index), sizeof(uint32_t), ONE, fp);
+        SAFE_WRITE(&(root->end_index), sizeof(uint32_t), ONE, fp);
         root->data.fprint(fp);
         // binary file
         uint64_t val = root->children.size();
@@ -247,6 +343,24 @@ struct CallingContextTree {
             SAFE_WRITE(&val, sizeof(uint64_t), ONE, fp);
             fprint(fp, CB->second);
         }
+    }
+    static void fprint(FILE* fp, CallingContextTree<Data_t>* root) {
+        // move to first node
+        while(root->last!=NULL) root=root->last;
+        CallingContextTree<Data_t>* p=root;
+        uint32_t num = 1;
+        while(p->next!=p) {
+            p = p->next; ++num;
+        }
+        int r; const uint64_t ONE = 1;
+        SAFE_WRITE(&num, sizeof(uint32_t), ONE, fp);
+        // then print each node in the liked list
+        while(root->next!=root) {
+            __fprint_linkedNode(fp, root);
+            root = root->next;
+        }
+        // print the last node
+        __fprint_linkedNode(fp, root);
     }
     static void fprintKeyString(FILE* fp, CallingContextTree<Data_t>* root) {
         fprintf(fp, "%ld %s\n", root->key, (root->key==CCT_ROOT_KEY)?"ROOT":(root->key==CCT_INVALID_KEY?"INVALID":reinterpret_cast<char*>(root->key)));
