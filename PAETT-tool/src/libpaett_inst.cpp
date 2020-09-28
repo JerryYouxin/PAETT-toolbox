@@ -17,6 +17,7 @@
 // #define PREALLOCATE_CCT
 #define MULTI_THREAD
 #define USE_OPENMP 1
+//#define USE_PTHREAD
 
 #include "CallingContextTree.h"
 #include "common.h"
@@ -26,20 +27,17 @@
 #include <sys/syscall.h> 
 #define MAXEVENT 10
 
-#define GET_THREADID PAPI_thread_id()
-
 #define METRIC_FN "metric.out"
 
 #ifdef MULTI_THREAD
 #define MAX_THREAD 1
-#define GET_THREADID PAPI_thread_id()
+#define GET_THREADID (uint64_t)PAPI_thread_id()
+#define THREAD_HANDLER pthread_self
 #ifdef USE_PTHREAD
-    #define THREAD_HANDLER pthread_self
-    #define GET_ACTIVE_THREAD_NUM 1
+    #define GET_ACTIVE_THREAD_NUM 28
 #elif (USE_OPENMP==1)
     #include <omp.h>
-    #define THREAD_HANDLER omp_get_thread_num
-    #define GET_ACTIVE_THREAD_NUM std::max(omp_get_max_threads(),1)
+    #define GET_ACTIVE_THREAD_NUM std::max(omp_get_max_threads(),0)
 #else
     #error "Only USE_PTHREAD or USE_OPENMP is supportted!"
 #endif
@@ -81,6 +79,8 @@ uint64_t elapsed_cyc;
 
 uint64_t elapsed_us_multi[MAX_THREAD] = {0};
 uint64_t begin_us_multi[MAX_THREAD];
+
+uint64_t main_thread_id;
 
 //#define STOP_WHEN_WARN
 //#define ENABLE_INFO_LOG
@@ -305,6 +305,7 @@ void PAETT_inst_init() {
         fprintf(stderr, "Error Duplicated initialization!!!\n");
         exit(EXIT_FAILURE);
     }
+    main_thread_id = pthread_self();
     char* freqmodEnv = getenv("PAETT_ENABLE_FREQMOD");
     enable_freqmod = (freqmodEnv && std::string(freqmodEnv)=="ENABLE");
     if(enable_freqmod) {
@@ -420,7 +421,7 @@ void PAETT_inst_init() {
             printf("Error: Too much event is configured (%d events but the platform only support maximum %d events at a time)\n", eventNum, numCounter);
             exit(1);
         }
-        assert(GET_THREADID==0);
+        //assert(GET_THREADID==0);
         printf("NumCounter: %d, Will Add %d Events\n",numCounter, eventNum); fflush(stdout);
         /* Create the EventSet */
         CHECK_PAPI_ISOK(PAPI_create_eventset(&EventSet)); fflush(stdout);
@@ -461,11 +462,14 @@ void PAETT_inst_thread_init(uint64_t key) {
     if(!initialized) return;
     // int retval, i;
     // // CHECK_PAPI_ISOK(PAPI_stop(EventSet, counterVal));
-    int tid = GET_THREADID;
-    if(tid!=0) return;
+    int tid = 0;
+    if(GET_THREADID!=main_thread_id) return;
     // fprintf(stderr,"thread_init for 0x%lx @ 0x%lx: tid=%d,danger=%d,initialized=%d\n",key,cur[tid]->key,tid,danger[tid],initialized); fflush(stderr);
     assert(tid<MAX_THREAD && "Thread number exceeds preallocated size!!!");
     assert(cur[tid]);
+    if(enable_freqmod) {
+        freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
+    }
     // if(cur[tid]->key!=key) {
     //     PAETT_inst_enter(key);
     //     // printf("After Enter: thread_init for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
@@ -478,15 +482,12 @@ void PAETT_inst_thread_init(uint64_t key) {
     // Stop counting first to disable overflow
     cur[tid]->data.active_thread = std::max(cur[tid]->data.active_thread, (uint64_t)GET_ACTIVE_THREAD_NUM);
     // printf("[key=%ld] active thread: %ld\n",cur[tid]->key,cur[tid]->data.active_thread); fflush(stdout);
-    if(enable_freqmod) {
-        freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
-    }
 }
 // Different from init, the fini instrumentation will do the work similiarly as PAETT_inst_exit, so only fini should be inserted.
 void PAETT_inst_thread_fini(uint64_t key) {
     if(!initialized) return;
-    int tid = GET_THREADID;
-    if(tid==0) --danger;
+    int tid = 0;//GET_THREADID;
+    if(GET_THREADID==main_thread_id) --danger;
     // printf("thread_exit for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
     PAETT_inst_exit(key);
     if(enable_freqmod) {
@@ -496,18 +497,25 @@ void PAETT_inst_thread_fini(uint64_t key) {
 #endif
 static uint64_t cct_num = 0;
 void PAETT_inst_enter(uint64_t key) {
-    // if key==0, it indicates that this is .omp functions that force to insert a enter function
-    // and if currently it is not in parallel region, we should not handle this enter request.
-    if(!omp_in_parallel() && key==0) return;
+// #ifdef USE_OPENMP
+//     // if key==0, it indicates that this is .omp functions that force to insert a enter function
+//     // and if currently it is not in parallel region, we should not handle this enter request.
+//     if(!omp_in_parallel() && key==0) return;
+// #endif
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_enter)(key);
     }
-    if(omp_in_parallel() || !initialized) return;
+    if(!initialized) return;
+// #ifdef USE_OPENMP
+//     if(omp_in_parallel()) return;
+// #endif
+    int tid = 0;//GET_THREADID;
+    //printf("[INFO] TID=%ld, main_thread_id=%ld\n", GET_THREADID, main_thread_id);
+    if(GET_THREADID!=main_thread_id) return;
+    // if(tid!=0) return;
     //printf("[DEBUG] %lx %s, %ld, %ld\n", key, reinterpret_cast<char*>(key), ++cct_num, (1L<<10));
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
-    int tid = GET_THREADID;
-    if(tid!=0) return;
     INFO("Enter key=0x%lx\n",key);
     assert(tid>=0);
     assert(tid<MAX_THREAD);
@@ -527,7 +535,7 @@ void PAETT_inst_enter(uint64_t key) {
             }
         }
         cur[tid]->data.cycle += e_cycles - g_cycles[tid];
-        cur[tid] = cur[tid]->getOrInsertChild(key, true/*default self end*/);
+        cur[tid] = cur[tid]->getOrInsertChild(key, !detection_mode/*default self end*/);
         //printf("Enter key=0x%lx context length = %ld\n", key, cur[tid]->length()); fflush(stdout);
         //assert((cur[tid]->length()<=50) && "Too deep (>50) calling context!!!");
         ++(cur[tid]->data.ncall);
@@ -559,17 +567,23 @@ void PAETT_inst_enter(uint64_t key) {
 }
 
 void PAETT_inst_exit(uint64_t key) {
-    // if key==0, it indicates that this is .omp functions that force to insert a exit function
-    // and if currently it is not in parallel region, we should not handle this exit request.
-    if(!omp_in_parallel() && key==0) return;
+// #ifdef USE_OPENMP
+//     // if key==0, it indicates that this is .omp functions that force to insert a exit function
+//     // and if currently it is not in parallel region, we should not handle this exit request.
+//     if(!omp_in_parallel() && key==0) return;
+// #endif
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_exit)(key);
     }
-    if(omp_in_parallel() || !initialized) return;
+    int tid = 0;//GET_THREADID;
+    if(GET_THREADID != main_thread_id) return;
+    //if(tid!=0) return;
+    if(!initialized) return;
+// #ifdef USE_OPENMP
+//     if(omp_in_parallel()) return;
+// #endif
     int retval;
     uint64_t e_cycles = PAPI_get_real_usec();
-    int tid = GET_THREADID;
-    if(tid!=0) return;
     INFO("Exit key=0x%lx\n",key);
     assert(tid>=0);
     assert(tid<MAX_THREAD);
@@ -608,7 +622,11 @@ void PAETT_inst_exit(uint64_t key) {
             assert(cur[tid]->parent);
             cur[tid] = cur[tid]->parent;
         } else {
-            printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
+            if(detection_mode) {
+                printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx(%s), key=0x%lx(%s)) is not same !!!\n",cur[tid]->key, cur[tid]->key==(uint64_t)(-1)?"ROOT":reinterpret_cast<char*>(cur[tid]->key), key, key==(uint64_t)(-1)?"ROOT":reinterpret_cast<char*>(key));
+            } else {
+                printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);
+            }
     #ifdef DEBUG
     #ifdef ENABLE_INFO_LOG
             printf("Warning: [libpaett_inst] paett_inst_exit not handled as key (cur=0x%lx, key=0x%lx) is not same !!!\n",cur[tid]->key, key);

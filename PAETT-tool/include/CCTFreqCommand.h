@@ -19,7 +19,7 @@ struct FreqCommandData : DataBase {
         SAFE_READ(&thread, sizeof(uint64_t), ONE, fp);
     }
     void print(FILE* fp=stdout) { fprintf(fp, "(%ld, %ld, %ld)", core, uncore, thread); }
-    void clear() { core=0; uncore=0; }
+    void clear() { core=0; uncore=0; thread=0; }
 };
 
 typedef CallingContextTree<FreqCommandData> CCTFreqCommand;
@@ -38,7 +38,10 @@ Enter 1 0 -1 ...
 Exit
 */
 CCTFreqCommand* readCCTFreqCommand(const char* fn) {
+    double s = omp_get_wtime();
     CCTFreqCommand* root = CCTFreqCommand::get();
+    double e = omp_get_wtime();
+    printf("get time %lf\n", e-s);
     FILE* fp = fopen(fn, "r");
     if(fp==NULL) {
         printf("CCT Frequency Command File: %s could not open!\n", fn);
@@ -58,6 +61,7 @@ CCTFreqCommand* readCCTFreqCommand(const char* fn) {
             fscanf(fp, "%ld", &(p->data.core));
             fscanf(fp, "%ld", &(p->data.uncore));
             fscanf(fp, "%ld", &(p->data.thread));
+            assert(p->data.thread>=0 && p->data.thread<=NCPU);
         } else if(strcmp(command, "Exit")==0) {
             p = p->parent;
         } else {

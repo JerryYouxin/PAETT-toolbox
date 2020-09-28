@@ -102,7 +102,7 @@ unknown:
 // }
 void print_significant(CallingContextLog* root, std::string pre);
 void __print_node(CallingContextLog* p, std::string pre) {
-    printf("%sEnter;%s;%ld;%ld;",pre.c_str(),keyMap[p->key].c_str(),p->start_index,p->end_index);
+    printf("%sEnter;%s;%ld;%ld;%ld;",pre.c_str(),keyMap[p->key].c_str(),p->start_index,p->end_index,p->data.active_thread);
     for(int i=0;i<p->data.size;++i) {
         printf("%ld ", p->data.eventData[i]);
     }
@@ -199,6 +199,7 @@ int main(int argc, char* argv[]) {
     CallingContextLog* root = CallingContextLog::read(options.prof_fn.c_str());
     if(root==NULL) return 1;
     splitEnergyData(root);
+    // CallingContextLog::print(root);
     //pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
     if(options.print_coverage) {
         printf("Significant Coverage : %.2lf %%", getSignificantCoverage(root));

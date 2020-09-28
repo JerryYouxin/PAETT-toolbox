@@ -20,6 +20,9 @@ namespace freqmod_cct {
 #define FUNCNAME(func) __FREQMOD_CCT_##func
 #endif
 
+// ReadOnly frequency commands, so all threads share a single CCTFreqCommand
+CCTFreqCommand* root=NULL;
+
 /* fine-grained tuning: 
     1. utilize cpu binding to enable per-core tuning. 
     2. per-socket uncore tuning is tuned before entering parallel region
@@ -64,7 +67,8 @@ int __get_mydie(int cpu_num) {
 // }
 
 void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint64_t uncore) {
-    // printf("-- Thread %d Tuning with affinity: core=%ld, uncore=%ld, tnum=%ld\n", omp_get_thread_num(), core, uncore, tnum);
+    //printf("-- Thread %d Tuning with affinity: core=%ld, uncore=%ld, tnum=%ld\n", omp_get_thread_num(), core, uncore, tnum);
+    assert(tnum>=0 && tnum<=NCPU);
     uint64_t step;
     switch(aff) {
         case CLOSE:
@@ -141,8 +145,6 @@ static thread_local int __die=INVALID_CPU;
 
 #endif
 
-// ReadOnly frequency commands, so all threads share a single CCTFreqCommand
-CCTFreqCommand* root=NULL;
 // Each thread has its own cct pointer 
 // NOTE: Nested parallelization is not supported!
 static thread_local CCTFreqCommand* cur=NULL;
@@ -166,11 +168,11 @@ inline void __tuneTo(CCTFreqCommand* self) {
         // printf("-- Thread %d Tuning core[%d]=%ld, uncore[%d]=%ld\n", __cpu, __cpu, root->data.core, __die, root->data.uncore);
         if(self->data.core)   core = self->data.core;
         if(self->data.uncore) uncore = self->data.uncore;
-        if(self->data.thread>1) {
+        if(self->data.thread>1 && self->data.thread<=NCPU) {
             PAETT_modOMPThread(self->data.thread);
             __tune_with_affinity(CPU_Affinity_t::CLOSE, self->data.thread, core, uncore);
             return ;
-        } else if (self->data.thread==0) {
+        } else if (self->data.thread==0 || self->data.thread>NCPU) {
             return;
         }
     }
@@ -190,10 +192,10 @@ inline void __tuneTo(CCTFreqCommand* self) {
         __die = __get_mydie(__cpu);
         for(int i=0;i<PAETT_get_ndie();++i) {
             if(i==__die) {
-                printf("[DEBUG] Tuning %d uncore to %ld\n",i, uncore);
+                //printf("[DEBUG] Tuning %d uncore to %ld\n",i, uncore);
                 PAETT_modUncoreFreq(__die, uncore);
             } else {
-                printf("[DEBUG] Tuning %d uncore to %ld\n",i, MIN_UNCORE_VALIE);
+                //printf("[DEBUG] Tuning %d uncore to %ld\n",i, MIN_UNCORE_VALIE);
                 PAETT_modUncoreFreq(i, MIN_UNCORE_VALIE);
             }
         }
@@ -235,7 +237,11 @@ STR2INT_ERROR str2int (int &i, char const *s, int base = 0)
 }
 
 void FUNCNAME(PAETT_inst_init)() {
+    double s = omp_get_wtime();
     PAETT_init();
+    double e = omp_get_wtime();
+    printf("Init FREQMOD Time: %lf s\n", e-s);
+    s = omp_get_wtime();
     char* envPath = getenv("PAETT_CCT_FREQUENCY_COMMAND_FILE");
     char* defaultCore = getenv("PAETT_DEFAULT_CORE_FREQ");
     char* defaultUncore = getenv("PAETT_DEFAULT_UNCORE_FREQ");
@@ -244,6 +250,9 @@ void FUNCNAME(PAETT_inst_init)() {
     } else {
         root = readCCTFreqCommand(envPath);
     }
+    e = omp_get_wtime();
+    printf("Init READ Time: %lf s\n", e-s);
+    s = omp_get_wtime();
     // if(root) {
     //     printf("[DEBUG] key=0x%lx, core=%ld, uncore=%ld, thread=%ld\n",root->key, root->data.core, root->data.uncore, root->data.thread); 
     //     root->printStack(); 
@@ -274,6 +283,7 @@ void FUNCNAME(PAETT_inst_init)() {
     if(root) {
         printf("Configured Frequency Command CCT:\n");
         CCTFreqCommand::print(root);
+        root->reset();
         __tuneTo(root);
     } else {
         printf("No frequency command CCT configuration found\n");
@@ -282,6 +292,8 @@ void FUNCNAME(PAETT_inst_init)() {
         __tuneTo(NULL);
 #endif
     }
+    e = omp_get_wtime();
+    printf("Init SET Time: %lf s\n", e-s);
     // FLOG = fopen("libpaett_freqmod_cct.log","w");
     // fprintf(FLOG, "libpaett_freqmod_cct initialized: %d\n", root!=NULL); fflush(FLOG);
 }
@@ -303,6 +315,7 @@ void FUNCNAME(PAETT_inst_exit)(uint64_t key) {
 // #endif
     // printf("Thread %d Exit %d, danger=%d, cpu=%d\n", omp_get_thread_num(), key, danger, __cpu);
     if(danger || root==NULL) return;
+    //printf("Exit key=%ld: thread %ld, core %ld, uncore %ld\n",key,root->data.thread, root->data.core, root->data.uncore);
     if(root->key==key) {
         root = root->parent;
         __tuneTo(root);
@@ -337,20 +350,23 @@ void FUNCNAME(PAETT_inst_enter)(uint64_t key) {
 // #endif
     // printf("Thread %d Enter %d, danger=%d, cpu=%d\n", omp_get_thread_num(), key, danger, __cpu);
     if(danger || root==NULL) return;
+    //printf("BEFORE ENTER: CURRENT=%ld, (%ld %ld %ld), cur=%ld\n", root->key, root->data.core, root->data.uncore, root->data.thread, root->cur_index);
     root = root->getOrInsertChild(key);
-    // printf("key=%ld: thread %ld, core %ld, uncore %ld\n",key,root->data.thread, root->data.core, root->data.uncore);
+    //printf("Enter key=%ld: thread %ld, core %ld, uncore %ld, cur=%ld, start=%ld, end=%ld\n",key,root->data.thread, root->data.core, root->data.uncore, root->cur_index, root->start_index, root->end_index);
     __tuneTo(root);
 }
 
 void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
-    // printf("[thread %d] THREAD_INIT...key=%ld\n",omp_get_thread_num(),key);
+    //printf("[thread %d] THREAD_INIT...key=%ld\n",omp_get_thread_num(),key);
     // if(root) root->printStack();
 #ifdef ENABLE_FINEGRANED_TUNING
     if(danger) return;
     // printf("OMP thread configuration: %d\n", omp_get_max_threads());
     if(root) {
         // printf("key %lx, thread %ld, core %ld, uncore %ld\n", key, root->data.thread, root->data.core, root->data.uncore);
-        if(root->key!=key) root = root->getOrInsertChild(key);
+#ifndef USE_NAMESPACE
+        root = root->getOrInsertChild(key);
+#endif
         uint64_t core = core_default;
         uint64_t uncore = uncore_default;
         if(root->data.core) core = root->data.core;
@@ -376,7 +392,7 @@ void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
 
 void FUNCNAME(PAETT_inst_thread_fini)(uint64_t key) {
     --danger;
-    // printf("[thread %d] THREAD_FINI...key=%ld\n",omp_get_thread_num(),key);
+    //printf("[thread %d] THREAD_FINI...key=%ld\n",omp_get_thread_num(),key);
 #ifdef ENABLE_FINEGRANED_TUNING
     if(danger) return;
     // if(root) {
@@ -406,7 +422,9 @@ void FUNCNAME(PAETT_inst_thread_fini)(uint64_t key) {
     //     PAETT_modCoreFreq(__cpu,core_default);
     //     PAETT_modUncoreFreq(__die, uncore_default);
     // }
-    if(root && root->parent->key!=key) root = root->parent;
+#ifndef USE_NAMESPACE
+    if(root) root = root->parent;
+#endif
     __tuneTo(root);
 #else
     FUNCNAME(PAETT_inst_exit)(key);

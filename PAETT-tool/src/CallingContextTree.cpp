@@ -176,7 +176,8 @@ void __mergeAllRegionsFromCCT(CallingContextLog* cur, std::unordered_map<uint64_
 bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool erase_pruned, std::unordered_map<uint64_t, filterMetrics>& regionMetrics) {
     auto it = regionMetrics.find(cur->key);
     // if the merged metric is lower than threshold, this node may be pruned
-    bool prune = (it==regionMetrics.end() || ((double)it->second.cycle/(double)it->second.ncall)<threshold);
+    //printf("%lx: %ld %ld %lf\n", it->first, it->second.cycle, it->second.ncall, threshold);
+    bool prune = true;
     std::vector<CallingContextLog::ChildList::iterator> prunedChildren;
     // if all chldren are pruned, this node may be pruned
     for(auto CB=cur->children.begin(), CE=cur->children.end();CB!=CE;++CB) {
@@ -206,7 +207,15 @@ bool __pruneCCTWithThreshold(CallingContextLog* cur, double threshold, bool eras
             cur->children.erase(key);
         }
     }
-    cur->pruned = cur->pruned || prune;
+    if(prune) {
+        // get actual time assumed to be executed exactly in this function (exclude his *valid* children's)
+        double time = cur->data.cycle;
+        // now update the time
+        time /= cur->data.ncall; // per call time
+        // simple and aggresive pruning methodology
+        prune = (cur->pruned||(time < threshold));
+        cur->pruned = prune;
+    }
     return prune;
 }
 

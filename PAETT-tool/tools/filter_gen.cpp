@@ -137,7 +137,8 @@ int main(int argc, char* argv[]) {
     root->reset();
     pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
     root->reset();
-    print_cct(root, false);
+    // print_cct(root, false);
+    // CallingContextLog::print(root);
     generate_filter(root, options.output.c_str());
     return 0;
 }

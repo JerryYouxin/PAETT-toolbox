@@ -195,7 +195,8 @@ void PAETT_modCoreFreq(int i, uint64_t coreFreq) {
         uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
         int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
         if (ret!=8) {
-            fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+            fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d (coreFreq=%ld, devId=%d)\n",ret, coreFreq, i);
+            exit(1);
         }
         last_core[i] = coreFreq;
     }
@@ -223,7 +224,8 @@ void PAETT_modFreqAll(uint64_t coreFreq, uint64_t uncoreFreq) {
         for (i=0;i<ncpu;++i) {
             int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
             if (ret!=8) {
-                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d (coreFreq=%ld, devId=%d)\n",ret, coreFreq, i);
+                exit(1);
             }
         }
         last_core[i] = coreFreq;
@@ -249,7 +251,8 @@ void PAETT_modCoreFreqAll(uint64_t coreFreq) {
         for (i=0;i<ncpu;++i) {
             int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
             if (ret!=8) {
-                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d\n",ret);
+                fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d (coreFreq=%ld, devId=%d)\n",ret, coreFreq, i);
+                exit(1);
             }
         }
         last_core[i] = coreFreq;

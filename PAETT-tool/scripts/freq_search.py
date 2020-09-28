@@ -446,11 +446,12 @@ class CallingContextTree:
         return hasCandidates
 
     def save(self, file):
-        file.write("{0} {1} {2} {3} ".format(self.name, self.core, self.uncore, self.thread))
-        self.metric.save(file)
-        file.write("{0}\n".format(len(self.child.keys())))
-        for r in self.child.keys():
-            self.child[r].save(file)
+        self.__saveTo(file)
+        # file.write("{0} {1} {2} {3} ".format(self.name, self.core, self.uncore, self.thread))
+        # self.metric.save(file)
+        # file.write("{0}\n".format(len(self.child.keys())))
+        # for r in self.child.keys():
+        #     self.child[r].save(file)
     
     def __saveNodeTo(self, file, pre=""):
         key = self.name
@@ -512,7 +513,10 @@ class CallingContextTree:
 
     def __generate_frequency_commands(self, file, keyMap, pre):
         key = keyMap[self.name]
-        file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(self.core), make_uncore(self.uncore), self.thread))
+        if self.pruned:
+            file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, 0, 0, 0))
+        else:
+            file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(self.core), make_uncore(self.uncore), self.thread))
         for r in self.child.keys():
             self.child[r].generate_frequency_commands(file, keyMap, pre+'  ')
         file.write(pre+"Exit\n")
@@ -528,7 +532,10 @@ class CallingContextTree:
 
     def __generate_frequency_commands_with(self, file, keyMap, core, uncore, thread, pre=""):
         key = keyMap[self.name]
-        file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(core), make_uncore(uncore), thread))
+        if self.pruned:
+            file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, 0, 0, 0))
+        else:
+            file.write(pre+"Enter {0} {1} {2} {3} {4} {5}\n".format(key, self.start_index, self.end_index, make_core(core), make_uncore(uncore), thread))
         for r in self.child.keys():
             self.child[r].generate_frequency_commands_with(file, keyMap, core, uncore, thread, pre+'  ')
         file.write(pre+"Exit\n")
@@ -582,15 +589,27 @@ class CallingContextTree:
             self.child[r].recover()
     
     def reset_freq(self):
-        self.core=0
-        self.uncore=0
-        for r in self.child.keys():
-            self.child[r].reset_freq()
+        p = self
+        while p!=p.next:
+            p.core=0
+            p.uncore=0
+            for r in p.child.keys():
+                p.child[r].reset_freq()
+            p = p.next
+        p.core=0
+        p.uncore=0
+        for r in p.child.keys():
+            p.child[r].reset_freq()
     
     def reset_thread(self):
         self.thread=0
-        for r in self.child.keys():
-            self.child[r].reset_thread()
+        p = self
+        while p!=p.next:
+            for r in p.child.keys():
+                p.child[r].reset_thread()
+            p = p.next
+        for r in p.child.keys():
+            p.child[r].reset_thread()
 
     def check(self, tot_energy, threshold=0.01):
         if self.metric.get(self.core, self.uncore) / tot_energy < threshold:
@@ -694,10 +713,11 @@ def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
                 key   = cont[1]
                 start = int(cont[2])
                 end   = int(cont[3])
+                tnum  = int(cont[4])
                 # UNSIGNED_INT_MAX is -1
                 if end == 4294967295:
                     end = -1
-                cont  = cont[4].split(' ')
+                cont  = cont[5].split(' ')
                 for s in cont:
                     record.append(float(s))
                 metric = record[:-1]
@@ -713,8 +733,12 @@ def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
                 assert(end==p.end_index)
                 if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
                     p.additional = (metric, energy)
+                    # if thread>0:
+                    #     p.thread = thread if tnum>1 else 1
                     if thread>0:
                         p.thread = thread
+                    else:
+                        p.thread = tnum
                     p.core = core
                     p.uncore = uncore
                     updated = True
@@ -930,6 +954,8 @@ def exec(exe, tnum, core, uncore, keymap_fn, out_dir='./', papi_events=[], cct_f
         events = events + ";" + pe
     os.environ['PAETT_PROFILE_EVENTS'] = events
     exe += " > paett-run.log."+str(tnum)
+    if tnum>0:
+        exe = "numactl --physcpubind=0-{0} ".format(tnum-1) + exe
     if VERBOSE:
         print("-- Running: ", exe)
     cmd = "freq_set {0} {1}".format(str(core), str(uncore))
@@ -1011,6 +1037,7 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_
             shutil.rmtree(out_dir)
         os.mkdir(out_dir)
     thread_list = [thread_num]
+    cct.reset_nodes()
     if enable_thread:
         thread_list = [ i for i in range(1,config.get_max_thread()) ]
         cct.reset_thread()

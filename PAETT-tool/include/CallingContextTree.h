@@ -9,8 +9,16 @@
 
 #include <iostream>
 
-#define PREALLOCATE_CCT
+//#define PREALLOCATE_CCT
 #define LOCAL_SEARCH
+
+#ifdef PREALLOCATE_CCT
+#error USING PREALLOCATE_CCT will cause severe overhead, which may result in worse energy-efficiency. DO NOT USE IT NOW.
+#endif
+
+// 1 M
+#define CCT_PREALLOCATE_SIZE (1L<<20)
+//#define CCT_PREALLOCATE_SIZE (1L<<10)
 
 #define GET_TOTAL_DATA_VALUE(result, root, var) do {\
     result=0; auto p=root->__getFirstNode(); \
@@ -25,7 +33,7 @@
 // Data_t must have fprint/fread method
 template<typename Data_t>
 struct CallingContextTree {
-#ifdef PREALLOCATE_CCT
+#ifdef LOCAL_SEARCH
     typedef std::vector<std::pair<uint64_t, CallingContextTree<Data_t>*> > ChildList;
 #else
     typedef std::unordered_map<uint64_t, CallingContextTree<Data_t>*> ChildList;
@@ -60,13 +68,24 @@ struct CallingContextTree {
         last_loc=0;
 #endif
     }
-    // 1 M
-    #define CCT_PREALLOCATE_SIZE (1L<<20)
-    //#define CCT_PREALLOCATE_SIZE (1L<<10)
+    #define EXTEND_WHEN_EXCEED
     static CallingContextTree<Data_t>* get() {
         static int psize = 0;
         static CallingContextTree<Data_t> pnodes[CCT_PREALLOCATE_SIZE];
+    #ifdef EXTEND_WHEN_EXCEED
+        static std::vector<CallingContextTree<Data_t>*> extended_nodes;
+        static int cur = -1;
+        if(psize>=CCT_PREALLOCATE_SIZE) {
+            if(cur<0 || cur>=CCT_PREALLOCATE_SIZE) {
+                cur = 0;
+                extended_nodes.push_back(new CallingContextTree<Data_t>[CCT_PREALLOCATE_SIZE]);
+            }
+            psize++;
+            return &extended_nodes[extended_nodes.size()-1][cur++];
+        }
+    #else
         assert(psize<CCT_PREALLOCATE_SIZE && "CCT Number exceeds the preallocated size!");
+    #endif
         return &pnodes[psize++];
     }
     static void free(CallingContextTree<Data_t>*) {}
@@ -114,7 +133,7 @@ struct CallingContextTree {
         }
         return NULL;
     }
-#ifdef PREALLOCATE_CCT
+#ifdef LOCAL_SEARCH
     void addChild(CallingContextTree<Data_t>* c) {
         children.push_back(std::make_pair(c->key, c)); c->parent = this;
     }
@@ -129,7 +148,7 @@ struct CallingContextTree {
         return p;
     }
     void __reset() {
-        cur_index = start_index;
+        cur_index = start_index-1;
         for(auto CB=children.begin(), CE=children.end();CB!=CE;++CB) {
             CB->second->reset();
             CB->second = CB->second->__getFirstNode();
@@ -170,11 +189,10 @@ struct CallingContextTree {
         return child;
     }
     CallingContextTree<Data_t>* getOrInsertChild(uint64_t key, bool default_self_end=false) {
-#ifdef PREALLOCATE_CCT
+#ifdef LOCAL_SEARCH
         auto ic=children.end();
         assert(children.size()>=0);
         if(children.size()>0) {
-#ifdef LOCAL_SEARCH
             int i = last_loc;
             do {
                 if(children[i].first==key) {
@@ -185,10 +203,6 @@ struct CallingContextTree {
                 i = (i+1) % children.size();
             } while(i!=last_loc);
             last_loc = children.size();
-#else
-            ic = children.begin();
-            while(ic!=children.end() && ic->first!=key) ++ic;
-#endif
         }
 #else
         auto ic = children.find(key);
@@ -206,7 +220,7 @@ struct CallingContextTree {
     }
     CallingContextTree<Data_t>* insertChild(CallingContextTree<Data_t>* child) {
         uint64_t key = child->key;
-#ifdef PREALLOCATE_CCT
+#ifdef LOCAL_SEARCH
         auto ic = children.begin();
         while(ic!=children.end() && ic->first!=key) ++ic;
 #else

@@ -35,7 +35,7 @@ void generate_config() {
         printf("Could not open config.h!\n");
         exit(1);
     }
-    const uint64_t alpha = 10;
+    const uint64_t alpha = 50; // we consider overhead <= 2% is reasonable
     const uint64_t factor = 10;
     uint64_t latency = max(config_metric.core_latency_max, config_metric.uncore_latency_max);
     fprintf(fp, "#ifndef __CONFIG_H__\n");
