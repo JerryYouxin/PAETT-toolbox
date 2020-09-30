@@ -1,0 +1,346 @@
+from abc import abstractmethod
+
+class CCTLinkedList:
+    def __init__(self):
+        self.cur_index = 0
+        self.curr = None
+        self.head = None
+        self.tail = None
+        self.removed = False
+
+    def current(self):
+        return self.curr.data
+
+    def reset(self):
+        self.cur_index = 0
+        self.curr = self.head
+        for p in self.getIterator():
+            p.reset()
+
+    # execute func(data) for all elements
+    def forAll(self, func):
+        p = self.curr
+        while p is not None:
+            func(p.data)
+            p = p.next
+    # iterator
+    def getIterator(self):
+        p = self.head
+        while p is not None:
+            yield p
+            p = p.next
+
+    # insert new node
+    def insertNode(self, cct):
+        if cct is None:
+            return False
+        if self.curr is None:
+            self.head = cct
+        else:
+            self.curr.next = cct
+        self.curr = cct
+        self.tail = cct
+        return True
+
+    def remove(self, node):
+        if node is None:
+            return
+        if node.last is not None:
+            node.last.next = node.next
+        if node.next is not None:
+            node.next.last = node.last
+        if self.head is node:
+            self.head = node.next
+        if self.tail is node:
+            self.tail = node.last
+        self.removed = True
+
+    def moveForward(self):
+        if self.removed:
+            # if has removed something, disable checking
+            if self.curr.next is not None:
+                self.curr = self.curr.next
+                return True
+            return False
+        else:
+            self.cur_index += 1
+            # print(self.curr.name, "MoveForward:", self.cur_index)
+            if self.cur_index > self.curr.end_index:
+                if self.curr.next is not None:
+                    self.curr = self.curr.next
+                    # print(self.curr.name, self.cur_index, self.curr.start_index, self.curr.end_index)
+                    assert(self.cur_index>=self.curr.start_index)
+                    assert(self.cur_index<=self.curr.end_index)
+                    return True
+        return False
+
+    def getOrInsertNode(self, cctNode):
+        # current node failed to move forward, so we try to move to the next node and check again
+        if not self.moveForward():
+            # failed to move forward, next node must be invalid
+            assert(self.curr.next is None)
+            # no invalid node, insert new one
+            self.insertNode(cctNode)
+            return cctNode
+        return self.curr
+
+class CallingContextTree:
+    def __init__(self, parent=None, name="ROOT", data=None, start_index=0, end_index=-1):
+        self.parent = parent
+        self.next = None
+        self.last = None
+        self.name = name
+        self.data = data
+        self.start_index = start_index
+        self.end_index = end_index
+        # {'name':<CCTLinkedList>}
+        self.child = {}
+
+    @staticmethod
+    def isSameNode(n1, n2, checkData=False):
+        return n1.name==n2.name and n1.start_index==n2.start_index and n1.end_index==n2.end_index
+
+    def getOrInsertChild(self, key, data, start_index=0, end_index=-1):
+        assert(end_index==-1 or start_index<=end_index)
+        if key not in self.child.keys():
+            assert(start_index==0)
+            cct = CCTLinkedList()
+            cct.insertNode(
+                    CallingContextTree(name=key, parent=self, data=data, start_index=start_index, end_index=end_index)
+                )
+            self.child[key] = cct
+        else:
+            self.child[key].getOrInsertNode(
+                    CallingContextTree(name=key, parent=self, data=data, start_index=start_index, end_index=end_index)
+                )
+        return self.child[key]
+
+    def insertChild(self, cct):
+        key = cct.name
+        if key not in self.child.keys():
+            ccts = CCTLinkedList()
+            ccts.insertNode(cct)
+            self.child[key] = ccts
+        else:
+            self.child[key].getOrInsertNode(cct)
+        return self.child[key]
+
+    def reset(self):
+        for _, cct in self.child.items():
+            cct.reset()
+
+    def processAllDataWith(self, func):
+        self.data = func(self.data)
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                n.processAllDataWith(func)
+
+    # func(<string description of this node>, parent)
+    def exportTreeWith(self, func, parent=None):
+        desc = self.name + '\n' + str(self.data)
+        # print(desc)
+        node = func(desc, parent)
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                n.exportTreeWith(func, node)
+        # print(node)
+        return node
+
+    def mergeBy(self, func):
+        res = func(self.data)
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                res += n.mergeBy(func)
+        return res
+    
+    def forAll(self, preFunc=None, postFunc=None):
+        if preFunc is not None:
+            preFunc(self.name, self.start_index, self.end_index, self.data)
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                n.forAll(preFunc, postFunc)
+        if postFunc is not None:
+            postFunc(self.name, self.start_index, self.end_index, self.data)
+    
+    def print(self, pre=""):
+        print(pre+'Enter {0} [{1},{2}]:'.format(self.name, self.start_index, self.end_index), end='')
+        self.data.print()
+        for _, cct in self.child.items():
+            for n in cct.getIterator():
+                n.print(pre+'  ')
+    
+    def filterBy(self, filter, args=None):
+        may_filter = True
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                isFiltered = n.filterBy(filter, args)
+                if args is None:
+                    isFiltered = isFiltered and filter(n.data)
+                else:
+                    isFiltered = isFiltered and filter(n.data, args)
+                if isFiltered:
+                    # print("REMOVE:", n)
+                    cct.remove(n)
+                else:
+                    may_filter = False
+        return may_filter
+
+    # only reserves nodes that are in the 'ref'
+    def filterByTree(self, ref):
+        removedChilds = []
+        for key, cct in self.child.items():
+            # print(key)
+            if key not in ref.child.keys():
+                # print("REMOVE CHILD ", key)
+                # print("REMOVE INFO: ", self.name, self.start_index, self.end_index)
+                # print("REMOVE INFO: ", ref.name, ref.start_index, ref.end_index)
+                removedChilds.append(key)
+                continue
+            cct_ref = ref.child[key]
+            cct_ref.reset()
+            cct.reset()
+            n = cct.head
+            if n is not None:
+                for n_ref in cct_ref.getIterator():
+                    # print("INFO: ", n_ref.name, n_ref.start_index, n_ref.end_index)
+                    while n is not None and not CallingContextTree.isSameNode(n, n_ref):
+                        # print("REMOVE INFO: ", n.name, n.start_index, n.end_index)
+                        # print("REMOVE INFO: ", n_ref.name, n_ref.start_index, n_ref.end_index)
+                        cct.remove(n)
+                        n = n.next
+                    if n is not None:
+                        # print("N INFO: ", n.name, n.start_index, n.end_index)
+                        n.filterByTree(n_ref)
+                        n = n.next
+                while n is not None:
+                    cct.remove(n)
+                    n = n.next
+            cct.reset()
+        for rc in removedChilds:
+            self.child.pop(rc)
+
+    def save(self, file):
+        file.write('Enter;{0};{1};{2};'.format(self.name, self.start_index, self.end_index))
+        self.data.save(file)
+        for _, cct in self.child.items():
+            for n in cct.getIterator():
+                n.save(file)
+        file.write("Exit\n")
+
+    @staticmethod
+    def load(file):
+        root = CallingContextTree()
+        line = file.readline()
+        cont = line.split(';')
+        command = cont[0].strip()
+        if command == 'Enter':
+            root.name = cont[1]
+            root.start_index = int(cont[2])
+            root.end_index   = int(cont[3])
+            active_thread = int(cont[4])
+            root.data = AdditionalData.load(";".join(cont[5:]))
+        elif command == 'Exit':
+            return None
+        else:
+            print("Error Unknown command:", command)
+            exit(1)
+        while True:
+            c = CallingContextTree.load(file)
+            if c is None:
+                break
+            root.insertChild(c)
+        return root
+            
+class AdditionalData:
+    def __init__(self, dataList=[]):
+        self.data = dataList
+
+    def save(self, file):
+        for d in self.data:
+            file.write("{0} ".format(d))
+        file.write("\n")
+
+    @staticmethod
+    def load(line):
+        cont = line.split(' ')
+        while cont[-1].strip()=='':
+            cont = cont[:-1]
+        while cont[0].strip()=='':
+            cont = cont[1:]
+        data = []
+        for c in cont:
+            data.append(c)
+        p = AdditionalData(data)
+        return p
+        
+    def print(self):
+        print(self.data)
+    
+    def __str__(self):
+        return str(self.data)
+
+def load_keyMap(fn, nameIsKey=True):
+    keyMap = {"ROOT":-1}
+    with open(fn, "r") as f:
+        for line in f:
+            cont = line[:-1].split(" ")
+            key = int(cont[0])
+            name= " ".join(cont[1:])
+            if nameIsKey:
+                keyMap[name] = key
+            else:
+                keyMap[key] = name
+    if nameIsKey:
+        keyMap['ROOT'] = -1
+    else:
+        keyMap[-1] = 'ROOT'
+    return keyMap
+
+class CCTFrequencyCommand(CallingContextTree):
+    def __generate(self, file, keyMap, pre=""):
+        assert(len(self.data.data)==3)
+        file.write(pre+'Enter {0} {1} {2} '.format(keyMap[self.name], self.start_index, self.end_index))
+        self.data.save(file)
+        for _, cct in self.child.items():
+            for n in cct.getIterator():
+                n.__generate(file, keyMap, pre+"  ")
+        file.write(pre+"Exit\n")
+
+    def generate(self, fileName, keymapFn):
+        keyMap = load_keyMap(keymapFn)
+        with open(fileName, "w") as f:
+            self.__generate(f, keyMap)
+
+    @staticmethod
+    def load(file, keyMap):
+        root = CCTFrequencyCommand()
+        line = file.readline()
+        # print(line[:-1])
+        cont = line.split(' ')
+        while cont[0]=='':
+            cont = cont[1:]
+        command = cont[0].strip()
+        if command == 'Enter':
+            root.name = keyMap[int(cont[1])]
+            #root.name = cont[1]
+            root.start_index = int(cont[2])
+            root.end_index   = int(cont[3])
+            data = [int(cont[4]), int(cont[5]), int(cont[6])]
+            root.data = AdditionalData(data)
+            # print(root.data)
+        elif command == 'Exit':
+            return None
+        else:
+            print("Error Unknown command:", command)
+            exit(1)
+        while True:
+            c = CCTFrequencyCommand.load(file, keyMap)
+            if c is None:
+                break
+            root.insertChild(c)
+        return root
