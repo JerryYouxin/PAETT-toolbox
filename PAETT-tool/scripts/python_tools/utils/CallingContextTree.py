@@ -129,8 +129,11 @@ class CallingContextTree:
         for _, cct in self.child.items():
             cct.reset()
 
-    def processAllDataWith(self, func):
-        self.data = func(self.data)
+    def processAllDataWith(self, func, args=None):
+        if args is None:
+            self.data = func(self.data)
+        else:
+            self.data = func(self.data, args)
         for _, cct in self.child.items():
             cct.reset()
             for n in cct.getIterator():
@@ -224,13 +227,47 @@ class CallingContextTree:
         for rc in removedChilds:
             self.child.pop(rc)
 
-    def save(self, file):
-        file.write('Enter;{0};{1};{2};'.format(self.name, self.start_index, self.end_index))
+    def mergeFrom(self, ref, rule):
+        removedChilds = []
+        self.data = rule(self.data, ref.data)
+        for key, cct in self.child.items():
+            if key not in ref.child.keys():
+                print("WARNING: REMOVE CHILD ", key)
+                print("WARNING: REMOVE INFO: ", self.name, self.start_index, self.end_index)
+                print("WARNING: REMOVE INFO(REF): ", ref.name, ref.start_index, ref.end_index)
+                removedChilds.append(key)
+                continue
+            cct_ref = ref.child[key]
+            cct_ref.reset()
+            cct.reset()
+            n = cct.head
+            if n is not None:
+                for n_ref in cct_ref.getIterator():
+                    # print("INFO: ", n_ref.name, n_ref.start_index, n_ref.end_index)
+                    while n is not None and not CallingContextTree.isSameNode(n, n_ref):
+                        print("WARNING: REMOVE INFO: ", n.name, n.start_index, n.end_index)
+                        print("WARNING: REMOVE INFO(REF): ", n_ref.name, n_ref.start_index, n_ref.end_index)
+                        cct.remove(n)
+                        n = n.next
+                    if n is not None:
+                        # print("N INFO: ", n.name, n.start_index, n.end_index)
+                        n.mergeFrom(n_ref, rule)
+                        n = n.next
+                while n is not None:
+                    print("WARNING: REMOVE INFO: ", n.name, n.start_index, n.end_index)
+                    cct.remove(n)
+                    n = n.next
+            cct.reset()
+        for rc in removedChilds:
+            self.child.pop(rc)
+
+    def save(self, file, delimiter=';', pre=''):
+        file.write(pre+delimiter.join(['Enter',str(self.name),str(self.start_index),str(self.end_index),'']))
         self.data.save(file)
         for _, cct in self.child.items():
             for n in cct.getIterator():
-                n.save(file)
-        file.write("Exit\n")
+                n.save(file, delimiter, pre+'  ')
+        file.write(pre+"Exit\n")
 
     @staticmethod
     def load(file):

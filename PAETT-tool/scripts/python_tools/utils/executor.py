@@ -1,8 +1,10 @@
 import os
 import subprocess
 
-def get_metric_name(pre, core, uncore, tnum):
-    return "{0}metric.dat.{1}.{2}.{3}".format(pre,core,uncore,tnum)
+def get_metric_name(pre, core, uncore, tnum, comment=None):
+    if comment is None:
+        return "{0}metric.dat.{1}.{2}.{3}".format(pre,core,uncore,tnum)
+    return "{0}metric.dat.{1}.{2}.{3}.{4}".format(pre,core,uncore,tnum, comment)
 # execute *exe* with *tnum* threads
 # the number of threads will be sent as the last argument of *exe*
 # and OMP_NUM_THREADS will automatically set to the tnum
