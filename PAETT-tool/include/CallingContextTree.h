@@ -169,6 +169,7 @@ struct CallingContextTree {
             // check to detect bug
             assert(child->next==child || child->cur_index <= child->next->end_index);
             if(child->cur_index >= child->next->start_index && child->cur_index <= child->next->end_index) {
+                child->next->cur_index = child->cur_index;
                 return child->next;
             } else {
                 CallingContextTree<Data_t>* next = CallingContextTree<Data_t>::get();

@@ -171,10 +171,16 @@ double getTotalTime(CallingContextLog* root) {
 
 double getSignificantTime(CallingContextLog* root, double total_time) {
     uint64_t time = 0;
-    if(!root->pruned) {
-        uint64_t t;
-        GET_TOTAL_DATA_VALUE(t, root, cycle);
-        time += t;
+    if(!root->pruned && root->key!=-1) {
+        // bool isLeaf = true;
+        // for(auto CB=root->children.begin(), CE=root->children.end();CB!=CE;++CB) {
+        //     isLeaf = isLeaf && CB->second->pruned;
+        // }
+        // if(isLeaf) {
+            uint64_t t;
+            GET_TOTAL_DATA_VALUE(t, root, cycle);
+            time += t;
+        // }
         // CallingContextLog* p = root;
         // while(p!=NULL) {
         //     printf("%s=>",keyMap[p->key].c_str());
@@ -202,7 +208,7 @@ int main(int argc, char* argv[]) {
     // CallingContextLog::print(root);
     //pruneCCTWithThreshold(root, PRUNE_THRESHOLD, false);
     if(options.print_coverage) {
-        printf("Significant Coverage : %.2lf %%", getSignificantCoverage(root));
+        printf("Significant Coverage : %.2lf %%\n", getSignificantCoverage(root));
     } else {
         root->reset();
         print_significant(root);

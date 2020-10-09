@@ -95,6 +95,7 @@ class CallingContextTree:
         self.end_index = end_index
         # {'name':<CCTLinkedList>}
         self.child = {}
+        self.pruned = False
 
     @staticmethod
     def isSameNode(n1, n2, checkData=False):
@@ -137,7 +138,31 @@ class CallingContextTree:
         for _, cct in self.child.items():
             cct.reset()
             for n in cct.getIterator():
-                n.processAllDataWith(func)
+                n.processAllDataWith(func, args)
+
+    def processAllKeyWith(self, func, args=None):
+        if args is None:
+            self.name = func(self.name)
+        else:
+            self.name = func(self.name, args)
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                n.processAllKeyWith(func, args)
+
+    def optimize(self):
+        mayPrune = True
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():
+                n.optimize()
+                mayPrune = mayPrune and n.pruned
+        if mayPrune and (self.parent is not None) and self.data==self.parent.data:
+        # if self.parent is not None:
+        #     print(self.data, self.parent.data)
+        #if mayPrune and (self.parent is not None) and self.data.data[0] == self.parent.data.data[0] and self.data.data[1] == self.parent.data.data[1]:
+            self.pruned = True
+            print("OPT INFO: {0} is pruned".format(self.name))
 
     # func(<string description of this node>, parent)
     def exportTreeWith(self, func, parent=None):
@@ -192,6 +217,18 @@ class CallingContextTree:
                 else:
                     may_filter = False
         return may_filter
+
+    def filterByPath(self, path, depth=1):
+        if depth >= len(path):
+            return
+        for _, cct in self.child.items():
+            cct.reset()
+            for n in cct.getIterator():    
+                if n.name != path[depth]:
+                    print("REMOVE:", n.name, path, depth, n.name!=path)
+                    cct.remove(n)
+                else:
+                    n.filterByPath(path, depth+1)
 
     # only reserves nodes that are in the 'ref'
     def filterByTree(self, ref):
@@ -261,6 +298,39 @@ class CallingContextTree:
         for rc in removedChilds:
             self.child.pop(rc)
 
+    def extractDataToList(self):
+        data = [ self.data.data ]
+        for _, cct in self.child.items():
+            for n in cct.getIterator():
+                data += n.extractToList()
+        return data
+
+    def extractDataByReg(self, res):
+        if self.name not in res.keys():
+            res[self.name] = [self.data]
+        else:
+            res[self.name]+= [self.data]
+        for _, cct in self.child.items():
+            for n in cct.getIterator():
+                data += n.extractToList(res)
+
+    def extractToList(self, enable_cct):
+        if enable_cct:
+            return self.extractDataToList()
+        lst = []
+        res = {}
+        self.extractDataByReg(res)
+        for reg, dlist in res.items():
+            length = 0
+            for data in dlist:
+                length = max(length, len(data))
+            metrics = [ 0 for i in range(0, length) ]
+            for data in dlist:
+                for i in range(0, len(data)):
+                    metrics[i] += data[i]
+            lst += metrics
+        return lst
+
     def save(self, file, delimiter=';', pre=''):
         file.write(pre+delimiter.join(['Enter',str(self.name),str(self.start_index),str(self.end_index),'']))
         self.data.save(file)
@@ -290,6 +360,7 @@ class CallingContextTree:
             c = CallingContextTree.load(file)
             if c is None:
                 break
+            c.parent = root
             root.insertChild(c)
         return root
             
@@ -301,6 +372,14 @@ class AdditionalData:
         for d in self.data:
             file.write("{0} ".format(d))
         file.write("\n")
+
+    def __eq__(self, other):
+        if len(self.data)!=len(other.data):
+            return False
+        for i in range(0, len(self.data)):
+            if self.data[i]!=other.data[i]:
+                return False
+        return True
 
     @staticmethod
     def load(line):
@@ -379,5 +458,6 @@ class CCTFrequencyCommand(CallingContextTree):
             c = CCTFrequencyCommand.load(file, keyMap)
             if c is None:
                 break
+            c.parent = root
             root.insertChild(c)
         return root

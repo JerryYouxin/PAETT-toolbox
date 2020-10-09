@@ -36,7 +36,7 @@ def main():
         print("Inited threshold=", threshold)
         cct_ref.filterBy(filterWithThreshold, threshold)
         root = cct_ref.exportTreeWith(export_node)
-        DotExporter(root).to_picture('ref.pdf')
+        # DotExporter(root).to_picture('ref.pdf')
     assert(cct_ref is not None)
     with open(args.cct, 'r') as file:
         cct = CCTFrequencyCommand.load(file, load_keyMap(args.keymap, False))
@@ -45,10 +45,14 @@ def main():
         #     cct_wrapped.loadAppendedData(fref)
         # threshold = cct.mergeBy(get_energy) * args.filter_threshold / 100.0
         #cct.filterBy(filterWithThreshold, threshold)
+        path = ["ROOT", "I:qb.C:435:9", "L:UserInterface.C:137:3", "I:UserInterface.C:210:19", "L:BOSampleStepper.C:451:3"]
+        cct.filterByPath( path )
         # cct.processAllDataWith(removeEnergy)
-        cct.filterByTree(cct_ref)
+        # print("AAA")
+        cct.optimize()
+        # cct.filterByTree(cct_ref)
         root = cct.exportTreeWith(export_node)
-        DotExporter(root).to_picture(args.out)
+        # DotExporter(root).to_picture(args.out)
         DotExporter(root).to_dotfile('plot.dot')
 
 if __name__ == '__main__':

@@ -32,13 +32,13 @@ CCTFreqCommand* root=NULL;
 #ifdef ENABLE_FINEGRANED_TUNING
 // TODO: implement cpu affinity and binding with hwloc library (for better portablity and abstraction)
 // sched.h needs _GNU_SOURCE for glibc specific cpu affinity functions (sched_*)
-// #ifndef _GNU_SOURCE
-// #define _GNU_SOURCE
-// #include <sched.h>
-// #undef _GNU_SOURCE
-// #else
-// #include <sched.h>
-// #endif
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#include <sched.h>
+#undef _GNU_SOURCE
+#else
+#include <sched.h>
+#endif
 #include <unistd.h>
 
 #include <config.h>
@@ -46,7 +46,7 @@ CCTFreqCommand* root=NULL;
 #define INVALID_CPU -1
 
 enum CPU_Affinity_t {
-    CLOSE, SPREAD   
+    DEFAULT=0, CLOSE, SPREAD
 };
 
 int __get_mydie(int cpu_num) {
@@ -89,24 +89,60 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
                 PAETT_modUncoreFreq(i,MIN_UNCORE_VALIE);
             }
             break;
-        // case SPREAD:
-        //     uint64_t dies = min(tnum, PAETT_get_ndie());
-        //     for(uint64_t i=0;i<tnum;++i) {
-        //         PAETT_modCoreFreq(i,core);
-        //     }
-        //     for(uint64_t i=tnum;i<PAETT_get_ncpu();++i) {
-        //         PAETT_modCoreFreq(i,MIN_CORE_VALIE);
-        //     }
-        //     for(uint64_t i=0;i<tnum && i<PAETT_get_ndie(); ++i) {
-        //         PAETT_modUncoreFreq(i,uncore);
-        //     }
-        //     for(uint64_t i=tnum;i<PAETT_get_ndie();++i) {
-        //         PAETT_modUncoreFreq(i,MIN_CORE_VALIE);
-        //     }
-        //     break;
+        case SPREAD:
+            uint64_t dies = min(tnum, PAETT_get_ndie());
+            uint64_t corePerDie = PAETT_get_ncpu() / PAETT_get_ndie();
+            uint64_t tnumPerDie = tnum / PAETT_get_ndie();
+            for(uint64_t i=0;i<tnum && i<PAETT_get_ndie(); ++i) {
+                uint64_t js=i*corePerDie;
+                uint64_t je=js+tnumPerDie;
+                uint64_t jr=js+corePerDie;
+                for(uint64_t j=js;j<je;++j) {
+                    PAETT_modCoreFreq(j,core);
+                }
+                for(uint64_t j=je;j<jr;++j) {
+                    PAETT_modCoreFreq(j, MIN_CORE_VALIE);
+                }
+                PAETT_modUncoreFreq(i,uncore);
+            }
+            for(uint64_t j=tnum*corePerDie;j<PAETT_get_ncpu();++j) {
+                PAETT_modCoreFreq(j, MIN_CORE_VALIE);
+            }
+            for(uint64_t i=tnum;i<PAETT_get_ndie();++i) {
+                PAETT_modUncoreFreq(i,MIN_CORE_VALIE);
+            }
+            break;
         default:
-            PAETT_modCoreFreqAll(core);
-            PAETT_modUncoreFreqAll(uncore);
+            cpu_set_t *set;
+            pid_t tid;
+            tid = syscall(SYS_gettid);
+            set = CPU_ALLOC(available_cores);
+            size_t set_size = CPU_ALLOC_SIZE(available_cores);
+            if (set == NULL) {
+                printf("ERROR during tuning with affinity: CPU_ALLOC\n");
+                return;
+            }
+            CPU_ZERO_S(set_size, set);
+            int err = sched_getaffinity(tid, set_size, set);
+            if (err == -1) {
+                printf("ERROR when getting affinity: sched_getaffinity\n");
+                return ;
+            }
+            uint64_t uncoreSet = 0;
+            for(uint64_t i=0;i<PAETT_get_ncpu();++i) {
+                if (CPU_ISSET_S(i, set_size, set)) {
+                    PAETT_modCoreFreq(i, core);
+                    die = __get_mydie(i);
+                    if(die!=0) uncoreSet |= (1<<die);
+                    else       uncoreSet |= 1
+                } else {
+                    PAETT_modCoreFreq(i, MIN_CORE_VALIE);
+                }
+            }
+            for(uint64_t i=0;i<PAETT_get_ndie();++i) {
+                if(uncoreSet & (1<<i)) PAETT_modUncoreFreq(i, uncore);
+                else                   PAETT_modUncoreFreq(i, MIN_CORE_VALIE);
+            }
             break;
     }
 }
@@ -160,6 +196,7 @@ void FUNCNAME(PAETT_print)() {
 }
 
 #ifdef ENABLE_FINEGRANED_TUNING
+CPU_Affinity_t affinity=CPU_Affinity_t::DEFAULT;
 inline void __tuneTo(CCTFreqCommand* self) {
     uint64_t core = core_default;
     uint64_t uncore = uncore_default;
@@ -170,7 +207,7 @@ inline void __tuneTo(CCTFreqCommand* self) {
         if(self->data.uncore) uncore = self->data.uncore;
         if(self->data.thread>1 && self->data.thread<=NCPU) {
             PAETT_modOMPThread(self->data.thread);
-            __tune_with_affinity(CPU_Affinity_t::CLOSE, self->data.thread, core, uncore);
+            __tune_with_affinity(affinity, self->data.thread, core, uncore);
             return ;
         } else if (self->data.thread==0 || self->data.thread>NCPU) {
             return;
@@ -250,6 +287,19 @@ void FUNCNAME(PAETT_inst_init)() {
     } else {
         root = readCCTFreqCommand(envPath);
     }
+#ifdef ENABLE_FINEGRANED_TUNING
+    char* affinitySetting = getenv("PAETT_AFFINITY");
+    if(affinitySetting!=NULL) {
+        std::string aff = std::string(affinitySetting);
+        if(aff=="CLOSE") {
+            affinity = CPU_Affinity_t::CLOSE;
+        } else if (aff=="SPREAD") {
+            affinity = CPU_Affinity_t::SPREAD;
+        } else {
+            affinity = CPU_Affinity_t::DEFAULT;
+        }
+    }
+#endif
     e = omp_get_wtime();
     printf("Init READ Time: %lf s\n", e-s);
     s = omp_get_wtime();
@@ -364,25 +414,25 @@ void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
     // printf("OMP thread configuration: %d\n", omp_get_max_threads());
     if(root) {
         // printf("key %lx, thread %ld, core %ld, uncore %ld\n", key, root->data.thread, root->data.core, root->data.uncore);
-#ifndef USE_NAMESPACE
+// #ifndef USE_NAMESPACE
         root = root->getOrInsertChild(key);
-#endif
+// #endif
         uint64_t core = core_default;
         uint64_t uncore = uncore_default;
         if(root->data.core) core = root->data.core;
         if(root->data.uncore) uncore = root->data.uncore;
         if(root->data.thread!=0) {
             PAETT_modOMPThread(root->data.thread);
-            __tune_with_affinity(CPU_Affinity_t::CLOSE, root->data.thread, core, uncore);
+            __tune_with_affinity(affinity, root->data.thread, core, uncore);
         } else {
-            __tune_with_affinity(CPU_Affinity_t::CLOSE, omp_get_max_threads(), core, uncore);
+            __tune_with_affinity(affinity, omp_get_max_threads(), core, uncore);
         }
         // PAETT_modCoreFreqAll(MIN_CORE_VALIE);
         // PAETT_modUncoreFreqAll(MIN_UNCORE_VALIE);
     } else {
         //__cpu_bind_to_range(0, tnum);
         //printf("%d\n", omp_get_max_threads());
-        __tune_with_affinity(CPU_Affinity_t::CLOSE, omp_get_max_threads(), core_default, uncore_default);
+        __tune_with_affinity(affinity, omp_get_max_threads(), core_default, uncore_default);
     }
 #else
     FUNCNAME(PAETT_inst_enter)(key);
@@ -424,8 +474,8 @@ void FUNCNAME(PAETT_inst_thread_fini)(uint64_t key) {
     // }
 #ifndef USE_NAMESPACE
     if(root) root = root->parent;
-#endif
     __tuneTo(root);
+#endif
 #else
     FUNCNAME(PAETT_inst_exit)(key);
 #endif
