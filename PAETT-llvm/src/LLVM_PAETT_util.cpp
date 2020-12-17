@@ -7,18 +7,18 @@
 
 using namespace llvm;
 
-void __lock() {
-    int fd = open("keymap.lock",O_CREAT|O_EXCL);
-    while(fd==-1) {
-        usleep(50);
-        fd = open("keymap.lock",O_CREAT|O_EXCL);
-    }
-    close(fd);
-}
+// void __lock() {
+//     int fd = open("keymap.lock",O_CREAT|O_EXCL);
+//     while(fd==-1) {
+//         usleep(50);
+//         fd = open("keymap.lock",O_CREAT|O_EXCL);
+//     }
+//     close(fd);
+// }
 
-void __unlock() {
-    remove("keymap.lock"); // release file lock
-}
+// void __unlock() {
+//     remove("keymap.lock"); // release file lock
+// }
 
 PAETT_Utils::PAETT_Utils() {
     // keySize = 0;

@@ -61,7 +61,7 @@ CCTFreqCommand* readCCTFreqCommand(const char* fn) {
             fscanf(fp, "%ld", &(p->data.core));
             fscanf(fp, "%ld", &(p->data.uncore));
             fscanf(fp, "%ld", &(p->data.thread));
-            assert(p->data.thread>=0 && p->data.thread<=NCPU);
+            // assert(p->data.thread>=0 && p->data.thread<=NCPU);
         } else if(strcmp(command, "Exit")==0) {
             p = p->parent;
         } else {
