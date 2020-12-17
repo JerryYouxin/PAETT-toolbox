@@ -6,6 +6,7 @@ Before building PAETT tools, install several dependance listed below:
 - x86_adapt
 - x86_energy
 - PAPI
+- userspace governer (should be settled before installation)
 
 # Build
 
