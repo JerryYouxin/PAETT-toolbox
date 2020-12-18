@@ -38,7 +38,45 @@ Note that the frequency modification needs *root* privillage, all tuning procedu
 2. (Optional) We need to detect all significant regions for further tuning to reduce the tuning overhead:
 
 ```
-# export ...
+# export PAETT_ENABLE_FREQMOD=DISABLE
+# export PAETT_DETECT_MODE=ENABLE
+# ./myapp # Execute the program
+```
+
+3. (Optional) After significant region detection, we generate the filter file from profile and re-compile the target program with the generated filter:
+
+```
+# filter_gen --out paett.freqmod.filt --prof_fn libpaett_inst.log --keymap PAETT.keymap
+# export PAETT_FILTER=paett.filt
+# paett-inst-clang myapp.c -o myapp # re-compile with filter
+```
+
+4. (Optional 1) Tune with searching. PowerSpector provides some useful tool scripts `scripts/freq_search.py` for this propose:
+
+```
+# freq_search --run=./myapp --exaustive
+```
+
+4. (Optional 2) Or collect profiling data for model training, and get final frequency commands by prediction.
+
+```
+# python3 scripts/python_tools/frequency_predict.py --exe=./myapp --model=</path/to/model.pkl> --papi=<List,of,PAPI,counters>
+```
+
+4. Re-compile to contain frequency modification codes only for production usage:
+
+```
+# unset PAETT_FILTER
+# export PAETT_CCT_FREQUENCY_COMMAND_FILTER=paett.freqmod.filt
+# paett-inst-clang myapp.c -o myapp # re-compile with filter
+```
+
+4. Now execute with tuned frequency commands:
+
+```
+# export PAETT_ENABLE_FREQMOD=ENABLE
+# export PAETT_CCT_FREQUENCY_COMMAND_FILE=frequency_command.cct
+# ./myapp
 ```
 
 # PAETT Environment Variables
