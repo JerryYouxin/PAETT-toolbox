@@ -57,13 +57,13 @@ Note that the frequency modification needs *root* privillage, all tuning procedu
 # freq_search --run=./myapp --exaustive
 ```
 
-4. (Optional 2) Or collect profiling data for model training, and get final frequency commands by prediction.
+5. (Optional 2) Or collect profiling data for model training, and get final frequency commands by prediction.
 
 ```
 # python3 scripts/python_tools/frequency_predict.py --exe=./myapp --model=</path/to/model.pkl> --papi=<List,of,PAPI,counters>
 ```
 
-4. Re-compile to contain frequency modification codes only for production usage:
+6. Re-compile to contain frequency modification codes only for production usage:
 
 ```
 # unset PAETT_FILTER
@@ -71,7 +71,7 @@ Note that the frequency modification needs *root* privillage, all tuning procedu
 # paett-inst-clang myapp.c -o myapp # re-compile with filter
 ```
 
-4. Now execute with tuned frequency commands:
+7. Now execute with tuned frequency commands:
 
 ```
 # export PAETT_ENABLE_FREQMOD=ENABLE
