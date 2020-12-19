@@ -124,5 +124,5 @@ after reboot, then acpi-cpufreq driver will be used.
 ## Change to userspace
 
 ```
-sudo cpufreq-set -g userspace
+sudo cpupower frequency-set -g userspace
 ```
