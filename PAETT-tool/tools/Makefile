@@ -15,7 +15,7 @@ BINFOLD=../bin
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 freqcomm_gen:freqcomm_gen.cpp.o
-	$(CXX) $(LDFLAGS) -lx86_adapt -lpaett_freqmod $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
+	$(CXX) $(LDFLAGS) $^ -lpaett_freqmod -lx86_adapt ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@
 
 paett_read_profile:paett_read_profile.cpp.o
 	$(CXX) $(LDFLAGS) $^ ../src/CallingContextTree.cpp.o -o $(BINFOLD)/$@

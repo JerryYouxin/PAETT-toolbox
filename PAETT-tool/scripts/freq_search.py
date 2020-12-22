@@ -1061,7 +1061,7 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_
         cct.print()
     return cct
 
-def exec_static(exe, tnum, core, uncore):
+def exec_static(exe, tnum, core, uncore, use_perf=False):
     if tnum>0:
         os.environ['OMP_NUM_THREADS'] = str(tnum)
     else:
@@ -1069,20 +1069,33 @@ def exec_static(exe, tnum, core, uncore):
     cmd = "freq_set {0} {1}".format(str(core), str(uncore))
     subprocess.check_call(cmd, shell=True)
     subprocess.check_call("sleep 1", shell=True)
-    if tnum>0:
-        subprocess.check_call("{ "+"perf stat -e energy-pkg {0} {1} 2>&1; ".format(exe, str(tnum))+"} > log", shell=True)
+    if use_perf:
+        if tnum>0:
+            subprocess.check_call("{ "+"perf stat -e energy-pkg {0} {1} 2>&1; ".format(exe, str(tnum))+"} > log", shell=True)
+        else:
+            subprocess.check_call("{ "+"perf stat -e energy-pkg {0} 2>&1; ".format(exe)+"} > log", shell=True)
     else:
-        subprocess.check_call("{ "+"perf stat -e energy-pkg {0} 2>&1; ".format(exe)+"} > log", shell=True)
+        if tnum>0:
+            subprocess.check_call("{ "+"collect_energy {0} {1} 2>&1; ".format(exe, str(tnum))+"} > log", shell=True)
+        else:
+            subprocess.check_call("{ "+"collect_energy {0} 2>&1; ".format(exe)+"} > log", shell=True)
     energy = 0
     time = 0
-    with open("log","r") as f:
-        for line in f:
-            if "Joules energy-pkg" in line:
-                cont = line.split()
-                energy = float(cont[0].replace(',',''))
-            if "seconds time elapsed" in line:
-                cont = line.split()
-                time = float(cont[0].replace(',',''))
+    if use_perf:
+        with open("log","r") as f:
+            for line in f:
+                if "Joules energy-pkg" in line:
+                    cont = line.split()
+                    energy = float(cont[0].replace(',',''))
+                if "seconds time elapsed" in line:
+                    cont = line.split()
+                    time = float(cont[0].replace(',',''))
+    else:
+        with open("collect_energy.log", "r") as f:
+            line = f.readline()
+            cont = line.split(',')
+            energy = float(cont[0].replace(',',''))
+            time = float(cont[1].replace(',',''))
     return energy, time
 
 def thread_search_static(exe, start, end, step):
@@ -1135,7 +1148,7 @@ if __name__=="__main__":
     read_only= False
     thread_only = False
     thread_begin = 2
-    thread_end = 28
+    thread_end = config.get_max_thread()
     thread_step = 2
     use_thread_search = True
     use_static = False

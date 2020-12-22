@@ -2,8 +2,10 @@
 #define __ENERGY_UTILS_H__
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-//#define ENABLE_DEBUG_LOG
+// #define ENABLE_DEBUG_LOG
 #ifdef ENABLE_DEBUG_LOG
 FILE* RAPL_LOG;
 #define RAPL_LOG_FN "energy_utils.log"
@@ -99,6 +101,7 @@ inline int energy_init() {
             ++E_counter_num[j];
         }
     }
+    return 0;
 }
 
 inline double get_pkg_energy() {

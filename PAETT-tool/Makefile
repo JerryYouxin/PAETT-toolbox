@@ -4,6 +4,7 @@ all:
 	cd src; make; cd ..
 	cd apps; make; cd ..
 	cd tools; make; cd ..
+	cd scripts; make; cd ..
 
 clean:
 	cd src; make clean; cd ..
