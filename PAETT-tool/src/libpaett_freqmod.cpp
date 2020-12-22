@@ -219,59 +219,59 @@ void PAETT_modFreqAll(uint64_t coreFreq, uint64_t uncoreFreq) {
     if(!initialized) return;
     if(omp_in_parallel()) return;
     int i;
-    if(coreFreq && last_core[i]!=coreFreq) {
-        uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
-        for (i=0;i<ncpu;++i) {
+    for (i=0;i<ncpu;++i) {
+        if(coreFreq && last_core[i]!=coreFreq) {
+            uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
             int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
             if (ret!=8) {
                 fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d (coreFreq=%ld, devId=%d)\n",ret, coreFreq, i);
                 exit(1);
             }
+            last_core[i] = coreFreq;
         }
-        last_core[i] = coreFreq;
     }
-    if(uncoreFreq && last_uncore[i]!=uncoreFreq) {
-        uint64_t uncore = uncoreFreq&0xff;
-        for (i=0;i<ndie;++i) {
+    for (i=0;i<ndie;++i) {
+        if(uncoreFreq && last_uncore[i]!=uncoreFreq) {
+            uint64_t uncore = uncoreFreq&0xff;
             int ret1 = x86_adapt_set_setting(dieList[i], x86_uncore_min_index, uncore);
             int ret2 = x86_adapt_set_setting(dieList[i], x86_uncore_max_index, uncore);
             if (ret1!=8 || ret2!=8) {
                 fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting uncore frequency failed: %d, %d\n",ret1, ret2);
             }
+            last_uncore[i] = uncoreFreq;
         }
-        last_uncore[i] = uncoreFreq;
     }
 }
 void PAETT_modCoreFreqAll(uint64_t coreFreq) {
     if(!initialized) return;
     if(omp_in_parallel()) return;
     int i;
-    if(coreFreq && last_core[i]!=coreFreq) {
-        uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
-        for (i=0;i<ncpu;++i) {
+    for (i=0;i<ncpu;++i) {
+        if(coreFreq && last_core[i]!=coreFreq) {
+            uint64_t pstate = MAKE_PSTATE_FROM_FREQ(coreFreq);
             int ret = x86_adapt_set_setting(cpuList[i], x86_pstate_index, pstate);
             if (ret!=8) {
                 fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting core pstate failed: %d (coreFreq=%ld, devId=%d)\n",ret, coreFreq, i);
                 exit(1);
             }
+            last_core[i] = coreFreq;
         }
-        last_core[i] = coreFreq;
     }
 }
 void PAETT_modUncoreFreqAll(uint64_t uncoreFreq) {
     if(!initialized) return;
     if(omp_in_parallel()) return;
     int i;
-    if(uncoreFreq && last_uncore[i]!=uncoreFreq) {
-        uint64_t uncore = uncoreFreq&0xff;
-        for (i=0;i<ndie;++i) {
+    for (i=0;i<ndie;++i) {
+        if(uncoreFreq && last_uncore[i]!=uncoreFreq) {
+            uint64_t uncore = uncoreFreq&0xff;
             int ret1 = x86_adapt_set_setting(dieList[i], x86_uncore_min_index, uncore);
             int ret2 = x86_adapt_set_setting(dieList[i], x86_uncore_max_index, uncore);
             if (ret1!=8 || ret2!=8) {
                 fprintf(stderr,"[libpaett_freqmod_x86_adapt] Error: x86_adapt_set_setting uncore frequency failed: %d, %d\n",ret1, ret2);
             }
+            last_uncore[i] = uncoreFreq;
         }
-        last_uncore[i] = uncoreFreq;
     }
 }
 
