@@ -46,7 +46,7 @@ Note that the frequency modification needs *root* privillage, all tuning procedu
 3. (Optional) After significant region detection, we generate the filter file from profile and re-compile the target program with the generated filter:
 
 ```
-# filter_gen --out paett.freqmod.filt --prof_fn libpaett_inst.log --keymap PAETT.keymap
+# filter_gen --out paett.filt --prof_fn libpaett_inst.log --keymap PAETT.keymap
 # export PAETT_FILTER=paett.filt
 # paett-inst-clang myapp.c -o myapp # re-compile with filter
 ```
