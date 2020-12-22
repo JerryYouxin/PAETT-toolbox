@@ -126,3 +126,13 @@ after reboot, then acpi-cpufreq driver will be used.
 ```
 sudo cpupower frequency-set -g userspace
 ```
+
+# Useful utility tools
+
+## collect_energy
+
+Support collect total energy consumption of the execution, similiar with `perf stat -e energy-pkg <exe> <args>`. Support platforms with `x86_energy` libraries. In addition, this tool can automatically warmup with `#warmup` times, and evaluate the average energy consumption and the average elasped time of `#evaluation` runs.
+
+```
+Usage: collect_energy [-a <#warmup> <#evaluation>] <exe> <args>
+```

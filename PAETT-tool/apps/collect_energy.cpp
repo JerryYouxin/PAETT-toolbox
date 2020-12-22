@@ -20,7 +20,7 @@ int main(int argc, char* argv[]) {
     int num_eval = 1;
     while(k<argc && argv[k][0]=='-') {
         std::string arg(argv[k]);
-        if(arg=="-a") {
+        if(arg=="-a" && k+2<argc) {
             num_warm = atoi(argv[k+1]);
             num_eval = atoi(argv[k+2]);
             k += 3;
@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
             exit(1);
         }
     }
-    if(k<=1 || argc<=1) {
+    if(argc<=1) {
         usage();
         return 1;
     }
