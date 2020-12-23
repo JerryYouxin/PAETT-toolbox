@@ -1,0 +1,3 @@
+#!/bin/bash
+export ROOT_POWERSPECTOR_TOOL=`dirname $0`/../
+python3 `dirname $0`/python_tools/PowerSpector/collect_data.py $@
