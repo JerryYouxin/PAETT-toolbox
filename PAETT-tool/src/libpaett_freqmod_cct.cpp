@@ -44,8 +44,13 @@ namespace freqmod_cct {
 
 #define INVALID_CPU -1
 
+#include <limits.h>
+
+template<typename T>
+inline T min(const T a,const T b) { return (a)<(b)?(a):(b); }
+
 enum CPU_Affinity_t {
-    CLOSE, SPREAD   
+    DEFAULT, CLOSE, SPREAD, ACTIVE_CLOSE
 };
 
 int __get_mydie(int cpu_num) {
@@ -66,8 +71,58 @@ void __restore_original_affinity() {
 }
 
 void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint64_t uncore) {
+    assert(tnum>=0 && tnum<=NCPU);
+    uint64_t step;
     switch(aff) {
         case CLOSE:
+        {
+            for(uint64_t i=0;i<tnum;++i) {
+                PAETT_modCoreFreq(i,core);
+            }
+            for(uint64_t i=tnum;i<PAETT_get_ncpu();++i) {
+                PAETT_modCoreFreq(i,MIN_CORE_VALIE);
+            }
+            step = PAETT_get_ncpu() / PAETT_get_ndie();
+            for(uint64_t i=0, k=0;i<tnum;i+=step, ++k) {
+                // printf("[DEBUG] TUNE WITH AFFINITY: %ld uncore to %ld\n",k, uncore);
+                PAETT_modUncoreFreq(k,uncore);
+            }
+            // printf("step=%ld, i start=%d, ndie=%ld\n",step,__get_mydie(tnum-1)+1,PAETT_get_ndie());
+            for(uint64_t i=__get_mydie(tnum-1)+1;i<PAETT_get_ndie();++i) {
+                // printf("[DEBUG] TUNE WITH AFFINITY: %ld uncore to %ld\n",i, MIN_UNCORE_VALIE);
+                PAETT_modUncoreFreq(i,MIN_UNCORE_VALIE);
+            }
+            break;
+            assert(0);
+        }
+        case SPREAD:
+        {
+            uint64_t dies = min(tnum, PAETT_get_ndie());
+            uint64_t corePerDie = PAETT_get_ncpu() / PAETT_get_ndie();
+            uint64_t tnumPerDie = tnum / PAETT_get_ndie();
+            for(uint64_t i=0;i<tnum && i<PAETT_get_ndie(); ++i) {
+                uint64_t js=i*corePerDie;
+                uint64_t je=js+tnumPerDie;
+                uint64_t jr=js+corePerDie;
+                for(uint64_t j=js;j<je;++j) {
+                    PAETT_modCoreFreq(j,core);
+                }
+                for(uint64_t j=je;j<jr;++j) {
+                    PAETT_modCoreFreq(j, MIN_CORE_VALIE);
+                }
+                PAETT_modUncoreFreq(i,uncore);
+            }
+            for(uint64_t j=tnum*corePerDie;j<PAETT_get_ncpu();++j) {
+                PAETT_modCoreFreq(j, MIN_CORE_VALIE);
+            }
+            for(uint64_t i=tnum;i<PAETT_get_ndie();++i) {
+                PAETT_modUncoreFreq(i,MIN_CORE_VALIE);
+            }
+            break;
+            assert(0);
+        }
+        case ACTIVE_CLOSE:
+        {
             cpu_set_t mask;
             CPU_ZERO( &mask );
             printf("tnum=%ld, core=%ld, uncore=%ld\n", tnum, core, uncore);
@@ -93,6 +148,7 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
                 printf("WARNING: Could not set CPU Affinity, continuing...\n");
             }
             break;
+        }
         default:
             PAETT_modCoreFreqAll(core);
             PAETT_modUncoreFreqAll(uncore);
@@ -162,8 +218,6 @@ inline void __tuneTo(CCTFreqCommand* self) {
     PAETT_modUncoreFreqAll(self->data.uncore);
 }
 #endif
-
-#include <limits.h>
 
 enum STR2INT_ERROR { SUCCESS, OVERFLOW, UNDERFLOW, INCONVERTIBLE };
 
