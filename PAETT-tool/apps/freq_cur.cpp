@@ -161,12 +161,17 @@ static __inline__ unsigned long long rdtsc(void) {
 
 #define GET_NANOTIME(t) (t.tv_sec * 1000000000LL + t.tv_nsec)
 
-double get_cur_uncore_freq() {
+double get_cur_uncore_freq(int devId) {
     // read msr
-    uint64_t uclk_b, uclk_e;
-    read_msr_by_idx(0,U_MSR_PMON_FIXED_CTR,&uclk_b);
+    uint64_t en, uclk_b, uclk_e;
+    read_msr_by_idx(devId,U_MSR_PMON_FIXED_CTL,&en);
+    write_msr_by_idx(devId, U_MSR_PMON_FIXED_CTL, (en|UNCORE_CLK_MASK));
+
+    read_msr_by_idx(devId,U_MSR_PMON_FIXED_CTR,&uclk_b);
     usleep(EST_TIME_US);
-    read_msr_by_idx(0,U_MSR_PMON_FIXED_CTR,&uclk_e);
+    read_msr_by_idx(devId,U_MSR_PMON_FIXED_CTR,&uclk_e);
+
+    write_msr_by_idx(devId, U_MSR_PMON_FIXED_CTL, (en));
     return ((double)(uclk_e-uclk_b))/(double)EST_TIME_S/1e9;
 }
 
@@ -177,15 +182,13 @@ int main() {
     cur_freq_fd = open(cur_freq_filename, O_RDONLY);
     CHECK_VALID_FD(cur_freq_fd,"Failed to open scaling cur freq!\n");
     // enable uncore clk
-    uint64_t en, uclk_b, uclk_e;
-    read_msr_by_idx(0,U_MSR_PMON_FIXED_CTL,&en);
-    write_msr_by_idx(0, U_MSR_PMON_FIXED_CTL, (en|UNCORE_CLK_MASK));
     // current state
-    uint64_t cf, cft;
-    double ucf = get_cur_uncore_freq();
-    get_cur_cpu_freq(0, &cf);
-    printf("Cur Core Freq: %.2lf GHz, Uncore Freq: %.2lf GHz\n", (double)cf/(double)1e6, ucf);
-    write_msr_by_idx(0, U_MSR_PMON_FIXED_CTL, (en));
+    for(int i=0; i<NCPU; ++i) {
+        uint64_t cf;
+        double ucf = get_cur_uncore_freq(i);
+        get_cur_cpu_freq(i, &cf);
+        printf("[%d] Cur Core Freq: %.2lf GHz, Uncore Freq: %.2lf GHz\n", i, (double)cf/(double)1e6, ucf);
+    }
     fin_msr();
     PAETT_finalize();
 }

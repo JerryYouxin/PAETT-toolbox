@@ -21,7 +21,7 @@ int main() {
         PAETT_getUncoreFreq(i, &uncore);
         union{ MSR_UNCORE_RATIO_LIMIT_T u; uint64_t v; } ur;
         ur.v = uncore;
-        printf("CPU [%d] Uncore Frequency Setting: %.1lf GHz\n", i, ur.u.min/10.0, ur.u.max/10.0);
+        printf("CPU [%d] Uncore Frequency Setting: %.1lf GHz, %.1lf GHz\n", i, ur.u.min/10.0, ur.u.max/10.0);
     }
     printf("===============================\n");
     PAETT_finalize();
