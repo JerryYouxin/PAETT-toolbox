@@ -49,7 +49,7 @@ prepend-path C_INCLUDE_PATH     ${topdir}/include
 For environment modules of `clang` installation, save the following lines replacing the `/path/to/clang/install` to the path of the clang installation path, and place the module file as `/etc/modulefiles/clang`
 
 ```
-%Module1.0###################################################
+#%Module1.0###################################################
 ## 
 ## clang (llvm 9.0.1 with Powerspector passes) modulefile
 ### 
