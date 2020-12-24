@@ -102,10 +102,10 @@ def main():
 
     papi = args.papi.split(',')
     assert(len(papi)>0)
-
-    cct = threadSearch(args.exe, args.keymap, args.papi.split(','), args.ts, args.te, args.step, args.consistant, args.cont)
-    data = collectData(args.exe, args.keymap, 0, -1, -1, cct=cct, enable_continue=args.cont, papi=papi)
     with open(args.out, "w") as f:
+        print("The collected data will be written into: ", args.out)
+        cct = threadSearch(args.exe, args.keymap, args.papi.split(','), args.ts, args.te, args.step, args.consistant, args.cont)
+        data = collectData(args.exe, args.keymap, 0, -1, -1, cct=cct, enable_continue=args.cont, papi=papi)
         for cont in data:
             buff = cont[0]+';'
             if len(cont)>2:
