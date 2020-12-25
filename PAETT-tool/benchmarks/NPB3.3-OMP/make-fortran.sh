@@ -1,5 +1,11 @@
 #!/bin/bash
 set -e
+
+module () 
+{ 
+    eval `/usr/bin/modulecmd bash $*`
+}
+
 BENCHMARKS="BT CG EP FT LU MG SP UA"
 
 module load flang

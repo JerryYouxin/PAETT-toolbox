@@ -20,7 +20,7 @@ config.h: libpaett_freqmod.so config_gen
 	./config_gen
 
 config_gen: config_gen.cpp.o
-	$(CXX) $(LDFLAGS) $^ $(LIBFOLD)/libpaett_freqmod.so -lx86_energy -lx86_adapt -o $@
+	$(CXX) $(LDFLAGS) $^ $(LIBFOLD)/libpaett_freqmod.so -lx86_energy -lx86_adapt -lpapi -o $@
 
 libpaett_freqmod.so:libpaett_freqmod.cpp.o CallingContextTree.cpp.o
 	$(CXX) $(LDFLAGS) -shared $^ -o $(LIBFOLD)/$@

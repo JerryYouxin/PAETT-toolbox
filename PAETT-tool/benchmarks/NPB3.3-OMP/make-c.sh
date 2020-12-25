@@ -1,5 +1,11 @@
 #!/bin/bash
 set -e
+
+module () 
+{ 
+    eval `/usr/bin/modulecmd bash $*`
+}
+
 BENCHMARKS="IS"
 
 module load clang

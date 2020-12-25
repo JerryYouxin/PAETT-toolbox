@@ -415,7 +415,8 @@ void PAETT_inst_init() {
         _eventList = eventList;
 #endif
         // check for available counters
-        int numCounter = PAPI_num_counters();
+        // int numCounter = PAPI_num_counters();
+        int numCounter = PAPI_num_hwctrs();
         es=0, ee=eventNum;
         if(eventNum>numCounter) {
             printf("Error: Too much event is configured (%d events but the platform only support maximum %d events at a time)\n", eventNum, numCounter);

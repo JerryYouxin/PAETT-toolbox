@@ -1,7 +1,13 @@
 #!/bin/bash
 set -e
+
+module () 
+{ 
+    eval `/usr/bin/modulecmd bash $*`
+}
+
 module load clang
-pushd src
+cd src
 cp Makefile.inst Makefile
 # first compilation for significant region detection
 make clean
@@ -18,4 +24,4 @@ export PAETT_FILTER=`pwd`/detect/paett.filt
 make clean
 make -j4
 mv ./XSBench ./XSBench.inst
-popd
+cd ..

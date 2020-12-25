@@ -2,7 +2,9 @@
 set -e
 cp config/make.def.inst config/make.def
 # first compilation for significant region detection
-make CLASS=C $1 clean
+cd $1
+make clean
+cd ..
 make CLASS=C $1
 lower=`echo "$1" | tr '[:upper:]' '[:lower:]'`
 mkdir -p detect/$1
@@ -15,6 +17,8 @@ filter_gen --out paett.filt --prof_fn libpaett_inst.log
 cd ../../
 # filter generated, now re-compile for profile instrumentation
 export PAETT_FILTER=`pwd`/detect/$1/paett.filt
-make CLASS=C $1 clean
+cd $1
+make clean
+cd ..
 make CLASS=C $1
 mv bin/${lower}.C.x bin/$1.C.inst
