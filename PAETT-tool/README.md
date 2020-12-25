@@ -1,4 +1,5 @@
-# Prerequests
+# PowerSpector libraries and utility tools
+## Prerequests
 
 Before building PAETT tools, install several dependance listed below:
 
@@ -8,7 +9,7 @@ Before building PAETT tools, install several dependance listed below:
 - PAPI
 - userspace governer (should be settled before installation)
 
-# Build
+## Build
 
 PAETT libraries and tool applications can be built by make tools as follows.
 
@@ -19,7 +20,7 @@ $ make
 
 The compiled executable tools are in `bin` directory, and libraries are in `lib` directory. 
 
-# Usage
+## Usage
 
 Compile the code with PAETT's clang/flang. We provide some wrapper scripts in `scripts` directory, where `paett-inst-*` is wrapper for PAETT's profiling instrumentation, and `paett-opt-*` is wrapper for PAETT's energy efficiency optimization.
 
@@ -27,7 +28,11 @@ To configure the profiling events of PAETT profiling, create/modify `profile.eve
 
 Note that the frequency modification needs *root* privillage, all tuning procedure needs to be done in *root*. We recommend all tuning procedures are done in *root* user.
 
-## Typical Workflow
+### Benchmarks to collect data for model training
+
+We provide the benchmarks (NPB-3.3 and XSBench from CORAL) and useful scripts to build and collect training data for power model training. The details are described in README in `benchmark`.
+
+### Typical Workflow
 
 0. Preparation: loading environment variables including PATH, LD_LIBRARY_PATHS...
 
@@ -87,7 +92,7 @@ Note that the frequency modification needs *root* privillage, all tuning procedu
 # ./myapp
 ```
 
-# PAETT Environment Variables
+## PAETT Environment Variables
 
 Used by profiling with `libpaett_inst`:
 - `PAETT_OUTPUT_PATH`: the path to PAETT's profiling output file
@@ -102,9 +107,9 @@ Used by PAETT compiler instrumentation plugin (`paett-inst-*`):
 
 `-paett_frequency_command_file=<path/to/file>`: command line option to configure the path to PAETT's generated frequency command file.
 
-# How to change to `userspace` for linux
+## How to change to `userspace` for linux
 
-## Disable `intel_pstate` driver
+### Disable `intel_pstate` driver
 
 in /etc/default/grub, change lines like following:
 
@@ -129,15 +134,15 @@ sudo reboot
 
 after reboot, then acpi-cpufreq driver will be used.
 
-## Change to userspace
+### Change to userspace
 
 ```
 sudo cpupower frequency-set -g userspace
 ```
 
-# Useful utility tools
+## Useful utility tools
 
-## collect_energy
+### collect_energy
 
 Support collect total energy consumption of the execution, similiar with `perf stat -e energy-pkg <exe> <args>`. Support platforms with `x86_energy` libraries. In addition, this tool can automatically warmup with `#warmup` times, and evaluate the average energy consumption and the average elasped time of `#evaluation` runs.
 
