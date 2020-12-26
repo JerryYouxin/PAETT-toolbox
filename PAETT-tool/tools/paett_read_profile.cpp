@@ -42,7 +42,7 @@ void usage() {
     printf("\t\t--print-data\t:print CallingContextTree with profiled data\n");
     printf("\t\t--print-significant\t:print automatically detected significant regions\n");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
-    printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's keymap file, the default value is %s\n", KEYMAP_FN".0");
+    printf("\t\t--keymap_fn <path/to/keymap>\t:set path to PAETT's keymap file, the default value is %s\n", KEYMAP_FN".0");
 }
 
 void parse_args(int argc, char* argv[]) {

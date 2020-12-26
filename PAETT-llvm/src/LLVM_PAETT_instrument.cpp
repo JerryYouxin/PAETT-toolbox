@@ -47,8 +47,12 @@ namespace {
                     filterEnabled = false;
                 } else {
                     filterEnabled = true;
+                    uint64_t keyVal;
+                    int is_parallel;
                     char buff[101];
-                    while(EOF!=fscanf(fp, "%100[^\n]", buff)) {
+                    while(EOF!=fscanf(fp, "%ld ", &keyVal)) {
+                        fscanf(fp, "%d ", &is_parallel);
+                        fscanf(fp, "%100[^\n]", buff);
                         std::string key(buff);
                         fscanf(fp, "%c", &buff[0]);
                         while(buff[0]!='\n') {
