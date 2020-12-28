@@ -97,6 +97,11 @@ class CallingContextTree:
         self.child = {}
         self.pruned = False
 
+    def getCCTPath(self):
+        if self.parent is None:
+            return self.name
+        return self.parent.getCCTPath()+';'+self.name
+
     @staticmethod
     def isSameNode(n1, n2, checkData=False):
         return n1.name==n2.name and n1.start_index==n2.start_index and n1.end_index==n2.end_index
@@ -298,14 +303,14 @@ class CallingContextTree:
         for rc in removedChilds:
             self.child.pop(rc)
 
-    def extractDataToList(self, with_name=True):
-        if with_name:
-            data = [ [self.name]+self.data.data ]
+    def extractDataToList(self, with_cct=True):
+        if with_cct:
+            data = [ [self.getCCTPath()]+self.data.data ]
         else:
             data = [ self.data.data ]
         for _, cct in self.child.items():
             for n in cct.getIterator():
-                data += n.extractDataToList(with_name)
+                data += n.extractDataToList(with_cct)
         return data
 
     def extractDataByReg(self, res):
@@ -327,7 +332,8 @@ class CallingContextTree:
             length = 0
             for data in dlist:
                 length = max(length, len(data))
-            metrics = [ 0 for i in range(0, length) ]
+            metrics = [reg]
+            metrics += [ 0 for i in range(0, length) ]
             for data in dlist:
                 for i in range(0, len(data)):
                     metrics[i] += data[i]

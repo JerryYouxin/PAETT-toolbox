@@ -11,8 +11,17 @@ import argparse
 # For Haswell, only 4 PAPI counters are valid to collect per run.
 MAX_PAPI_COUNTER_PER_RUN=4
 
+def write_metrics(f, data):
+    for cont in data:
+        buff = cont[0]+';'
+        if len(cont)>2:
+            for v in cont[1:-1]:
+                buff += str(v)+' '
+        buff += str(cont[-1])
+        f.write(buff+'\n')
+
 # tnum, core, uncore: -1 indicates iterating all possible configurations; 0 indicates using default; >0 indicates the specified configuration
-def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, cct=None, collect_energy=True, enable_cct=True, enable_continue=False, VERBOSE=1):
+def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, cct=None, check_point_dir=None, collect_energy=True, enable_cct=True, enable_continue=False, VERBOSE=1):
     out_dir = "metrics/"
     if enable_continue:
         if not os.path.exists(out_dir):
@@ -79,7 +88,11 @@ def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, cct=
                 if c>0:
                     cct_tmp.processAllDataWith(addThreadInfo, c)
                 # extract to list
-                data += cct_tmp.extractToList(enable_cct)
+                lst = cct_tmp.extractToList(enable_cct)
+                if check_point_dir is not None:
+                    with open(check_point_dir+'/metric.{0}.{1}.{2}'.format(t,u,c), "w") as f:
+                        write_metrics(f, lst)
+                data += lst
     print("\nFinish!")
     return data
 
@@ -100,19 +113,21 @@ def main():
     parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='')
     args = parser.parse_args()
 
+    check_point_dir = args.out.split('/')
+    if len(check_point_dir) > 1:
+        check_point_dir = "/".join(check_point_dir[:-1])
+    else:
+        check_point_dir = './'
+
+    print("The checkpoint directory is set to: ", check_point_dir)
+
     papi = args.papi.split(',')
     assert(len(papi)>0)
     with open(args.out, "w") as f:
         print("The collected data will be written into: ", args.out)
         cct = threadSearch(args.exe, args.keymap, args.papi.split(','), args.ts, args.te, args.step, args.consistant, args.cont)
-        data = collectData(args.exe, args.keymap, 0, -1, -1, cct=cct, enable_continue=args.cont, papi=papi)
-        for cont in data:
-            buff = cont[0]+';'
-            if len(cont)>2:
-                for v in cont[1:-1]:
-                    buff += str(v)+' '
-            buff += str(cont[-1])
-            f.write(buff+'\n')
+        data = collectData(args.exe, args.keymap, 0, -1, -1, cct=cct, enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
+        write_metrics(f, data)
 
 if __name__=='__main__':
     main()
