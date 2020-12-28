@@ -305,7 +305,7 @@ class CallingContextTree:
             data = [ self.data.data ]
         for _, cct in self.child.items():
             for n in cct.getIterator():
-                data += n.extractToList()
+                data += n.extractDataToList(with_name)
         return data
 
     def extractDataByReg(self, res):
@@ -315,7 +315,7 @@ class CallingContextTree:
             res[self.name]+= [self.data]
         for _, cct in self.child.items():
             for n in cct.getIterator():
-                res[self.name] += n.extractToList(res)
+                res[self.name] += n.extractDataToList(False)
 
     def extractToList(self, enable_cct):
         if enable_cct:
