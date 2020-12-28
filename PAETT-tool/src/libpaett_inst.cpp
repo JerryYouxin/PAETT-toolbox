@@ -62,9 +62,10 @@ FILE* RAPL_LOG;
 // freqmod can be enabled by setting environment variable PAETT_ENABLE_FREQMOD as 'ENABLE'
 #define USE_NAMESPACE
 #include "libpaett_freqmod_cct.cpp"
+#include <vector>
 
 static bool enable_freqmod = false;
-static uint64_t* eventDataBuffer[MAX_THREAD];
+static std::vector<uint64_t*> eventDataBuffer[MAX_THREAD];
 static uint64_t eventDataBufferIndex[MAX_THREAD];
 static CallingContextLog* root[MAX_THREAD];
 static CallingContextLog* cur[MAX_THREAD] = {0};
@@ -285,16 +286,30 @@ uint64_t* __allocate_eventLogSpace(int i, uint64_t s) {
     assert(i<MAX_THREAD);
     //printf("[%d]: Allocate Size %lu B, Avail %lu B, Used %lu B\n",i, s, (eventNum*2*CCT_PREALLOCATE_SIZE)-eventDataBufferIndex[i], eventDataBufferIndex[i]);
     //fflush(stdout);
-    uint64_t* res = &(eventDataBuffer[i][eventDataBufferIndex[i]]);
+    if(eventDataBuffer[i].size()==0 || eventDataBufferIndex[i]>=eventNum*2*CCT_PREALLOCATE_SIZE) {
+        printf("[%d] ALLOCATE NEW BUFFER as the previous buffer [%d] is full\n", i, eventDataBuffer[i].size());
+        eventDataBufferIndex[i]=0;
+        uint64_t* buff = (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
+        if(buff==NULL) {
+            printf("Failed to allocate memory!!!\n");
+            exit(1);
+        }
+        eventDataBuffer[i].push_back(buff);
+    }
+    int n = eventDataBuffer[i].size()-1;
+    uint64_t* res = &(eventDataBuffer[i][n][eventDataBufferIndex[i]]);
+    memset(res, 0, s*sizeof(uint64_t));
     eventDataBufferIndex[i]+=s;
-    assert(eventDataBufferIndex[i]<=eventNum*2*CCT_PREALLOCATE_SIZE);
     return res;
 }
 
 void __preallocate_fini() {
     if(eventNum>0) {
         for(int i=0;i<MAX_THREAD;++i) {
-            free(eventDataBuffer[i]);
+            for(int n=0;n<eventDataBuffer[i].size(); ++n) {
+                free(eventDataBuffer[i][n]);
+            }
+            eventDataBuffer[i].clear();
         }
     }
 }
@@ -393,13 +408,6 @@ void PAETT_inst_init() {
         cur[i]=root[i];
         cur[i]->data.size = eventNum;
         if(eventNum>0) {
-            eventDataBuffer[i] = (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
-            if(eventDataBuffer[i]==NULL) {
-                printf("Failed to allocate memory!!!\n");
-                exit(1);
-            }
-            memset(eventDataBuffer[i], 0, sizeof(uint64_t)*eventNum*2*CCT_PREALLOCATE_SIZE);
-            eventDataBufferIndex[i] = 0;
             cur[i]->data.eventData = __allocate_eventLogSpace(i, eventNum*2);// (uint64_t*)malloc(sizeof(uint64_t)*eventNum*2);
         }
     }
