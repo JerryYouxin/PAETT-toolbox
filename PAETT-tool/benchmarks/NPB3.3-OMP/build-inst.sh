@@ -16,7 +16,7 @@ export PAETT_DETECT_MODE=ENABLE
 filter_gen --out paett.filt --prof_fn libpaett_inst.log
 cd ../../
 # filter generated, now re-compile for profile instrumentation
-export PAETTPAETT_CCT_FREQUENCY_COMMAND_FILTER=`pwd`/detect/$1/paett.filt
+export PAETT_CCT_FREQUENCY_COMMAND_FILTER=`pwd`/detect/$1/paett.filt
 cd $1
 make clean
 cd ..
