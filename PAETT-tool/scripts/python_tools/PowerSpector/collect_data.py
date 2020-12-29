@@ -21,8 +21,19 @@ def write_metrics(f, data):
         f.write(buff+'\n')
 
 # tnum, core, uncore: -1 indicates iterating all possible configurations; 0 indicates using default; >0 indicates the specified configuration
-def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, cct=None, check_point_dir=None, collect_energy=True, enable_cct=True, enable_continue=False, VERBOSE=1):
-    out_dir = "metrics/"
+def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, check_point_dir=None, collect_energy=True, enable_cct=True, enable_continue=False, VERBOSE=1):
+    print("The checkpoint directory is set to: ", check_point_dir)
+    if check_point_dir is not None:
+        if enable_continue:
+            if not os.path.exists(check_point_dir):
+                print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
+                enable_continue = False
+                os.mkdir(check_point_dir)
+        else:
+            if os.path.exists(check_point_dir):
+                shutil.rmtree(check_point_dir)
+            os.mkdir(check_point_dir)
+    out_dir = 'metrics/'
     if enable_continue:
         if not os.path.exists(out_dir):
             print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
@@ -32,9 +43,6 @@ def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, cct=
         if os.path.exists(out_dir):
             shutil.rmtree(out_dir)
         os.mkdir(out_dir)
-    if cct_file is not None:
-        with open(cct_file, "r") as f:
-            cct = CallingContextTree.load(f)
     tnumList = []
     coreList = []
     uncoreList = []
@@ -71,7 +79,7 @@ def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, cct=
                     papi_self = papi[i*MAX_PAPI_COUNTER_PER_RUN:(i+1)*MAX_PAPI_COUNTER_PER_RUN]
                     res_fn = get_metric_name(out_dir, c, u, t, i)
                     if not (enable_continue or os.path.exists(res_fn)):
-                        res_fn = execute(exe, t, c, u, keymap_fn, out_dir, res_fn=res_fn, papi_events=papi_self, collect_energy=True)
+                        res_fn = execute(exe, t, c, u, keymap_fn, out_dir, res_fn=res_fn, papi_events=papi_self, collect_energy=True, cct_fn=cct_file)
                     file = open(res_fn, 'r')
                     __cct_tmp = CallingContextTree.load(file)
                     file.close()
@@ -118,15 +126,14 @@ def main():
         check_point_dir = "/".join(check_point_dir[:-1])
     else:
         check_point_dir = './'
-
-    print("The checkpoint directory is set to: ", check_point_dir)
+    check_point_dir = check_point_dir+'/checkpoints/'
 
     papi = args.papi.split(',')
     assert(len(papi)>0)
     with open(args.out, "w") as f:
         print("The collected data will be written into: ", args.out)
-        cct = threadSearch(args.exe, args.keymap, args.papi.split(','), args.ts, args.te, args.step, args.consistant, args.cont)
-        data = collectData(args.exe, args.keymap, 0, -1, -1, cct=cct, enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
+        threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
+        data = collectData(args.exe, args.keymap, 0, -1, -1, cct_file='thread.cct', enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
         write_metrics(f, data)
 
 if __name__=='__main__':

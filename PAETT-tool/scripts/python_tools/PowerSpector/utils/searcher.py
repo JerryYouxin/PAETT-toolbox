@@ -1,4 +1,4 @@
-from .CallingContextTree import CallingContextTree, AdditionalData, load_keyMap
+from .CallingContextTree import CCTFrequencyCommand, CallingContextTree, AdditionalData, load_keyMap
 from .executor import execute, execute_static, get_metric_name
 from .Configuration import config
 
@@ -24,27 +24,35 @@ def addThreadInfo(data, tnum):
     return AdditionalData([tnum]+data.data)
 
 def thread_exec(exe, keymap_fn, tnum, papi, cct, out_dir, enable_continue):
-    nrun = int((len(papi) + MAX_PAPI_COUNTER_PER_RUN - 1) / MAX_PAPI_COUNTER_PER_RUN)
-    for i in range(0, nrun):
-        papi_self = papi[i*MAX_PAPI_COUNTER_PER_RUN:(i+1)*MAX_PAPI_COUNTER_PER_RUN]
-        res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), tnum, i)
-        if not (enable_continue or os.path.exists(res_fn)):
-            res_fn = execute(exe, tnum, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, res_fn=res_fn, papi_events=papi_self, collect_energy=True)
+    if len(papi)>0:
+        nrun = int((len(papi) + MAX_PAPI_COUNTER_PER_RUN - 1) / MAX_PAPI_COUNTER_PER_RUN)
+        for i in range(0, nrun):
+            papi_self = papi[i*MAX_PAPI_COUNTER_PER_RUN:(i+1)*MAX_PAPI_COUNTER_PER_RUN]
+            res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), tnum, i)
+            if not (enable_continue or os.path.exists(res_fn)):
+                res_fn = execute(exe, tnum, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, res_fn=res_fn, papi_events=papi_self, collect_energy=True)
+            file = open(res_fn, 'r')
+            cct_tmp = CallingContextTree.load(file)
+            file.close()
+            if cct is None:
+                cct = cct_tmp
+            else:
+                cct.mergeFrom(cct_tmp, rule=mergeMetrics)
+    else:
+        res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), tnum, 0)
+        res_fn = execute(exe, tnum, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, res_fn=res_fn, papi_events=[], collect_energy=True)
         file = open(res_fn, 'r')
-        cct_tmp = CallingContextTree.load(file)
+        cct = CallingContextTree.load(file)
         file.close()
-        if cct is None:
-            cct = cct_tmp
-        else:
-            cct.mergeFrom(cct_tmp, rule=mergeMetrics)
     # Now we add thread information into the data domain
     cct.processAllDataWith(addThreadInfo, tnum)
     return cct
 
 # [start, end], with step size *step*
-def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_thread, enable_continue, enable_cct=True, cct_file="thread.cct"):
+def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_thread, enable_continue, enable_cct=True, cct_file="thread.cct", generate_commands=False, checkpoint_dir='./'):
     assert(enable_cct==True)
-    out_dir = 'thread_metrics/'
+    out_dir = checkpoint_dir+'/thread_metrics/'
+    print("Using checkpoint directory: ", out_dir)
     if enable_continue:
         if not os.path.exists(out_dir):
             print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
@@ -79,9 +87,16 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
     # reset cct iterators
     cct.reset()
     if cct_file is not None:
-        print("Save thread optimized cct to ", cct_file)
-        with open(cct_file, 'w') as f:
-            cct.save(f)
+        if generate_commands:
+            print("Save thread optimized cct frequency commands to ", cct_file)
+            cct.processAllKeyWith(lambda key,keyMap:keyMap[key], load_keyMap(keymap_fn))
+            cct.processAllDataWith(lambda data:AdditionalData([0,0,data.data[0]]))
+            with open(cct_file, 'w') as f:
+                cct.save(f, delimiter=' ')
+        else:
+            print("Save thread optimized cct to ", cct_file)
+            with open(cct_file, 'w') as f:
+                cct.save(f)
     return cct
 
 class StaticThreadSearcher: 
