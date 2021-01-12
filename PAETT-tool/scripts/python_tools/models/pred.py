@@ -38,26 +38,23 @@ def read_data(benchmarks):
         I_train = []
         O_train = []
         E_region= {}
-        with open(b+"/metric.dat.3","r") as f:
+        with open(b,"r") as f:
             core=0
             uncore=0
             for line in f:
-                cont = line.split(' ')
-                if len(cont)==0:
+                contori = line.split(';')
+                if len(contori)==0:
                     continue
-                if len(cont)==3 and cont[0]=='Freq':
-                    core=int(cont[1])
-                    uncore=int(cont[2])
-                else:
-                    # print(b, "\t", line)
+                if len(contori)==2:
+                    cont = ( contori[1].replace("\n","") ).split(' ')
+                    core=int(cont[0])
+                    uncore=int(cont[1])
                     assert(core!=0 and uncore!=0)
-                    record = [core, uncore]
-                    # print(line)
-                    cont = line.split(';')
-                    key = cont[0]
+                    record = []
+                    key = contori[0]
+                    # print(key)
                     if key not in E_region.keys():
-                        E_region[key] = ([],[],[],[]) # (core, uncore, energy, model_input)
-                    cont = cont[1].split(' ')
+                        E_region[key]=([],[],[],[])
                     for s in cont:
                         record.append(float(s))
                     I_train.append(record[:-1])
@@ -66,8 +63,12 @@ def read_data(benchmarks):
                     E_region[key][1].append(uncore)
                     E_region[key][2].append(record[-1])
                     E_region[key][3].append(record[:-1])
+                else:
+                    continue
         res[b] = (I_train, O_train, E_region)
+        #print(res[b])
     return res
+
 
 def filter_data(data, test_num, energy_threshold):
     res = {}
