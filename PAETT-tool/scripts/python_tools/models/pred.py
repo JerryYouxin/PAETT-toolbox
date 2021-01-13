@@ -1,4 +1,5 @@
-from sklearn.neural_network import MLPRegressor
+
+m sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -43,18 +44,26 @@ def read_data(benchmarks):
             uncore=0
             for line in f:
                 contori = line.split(';')
+                #print(contori)
                 if len(contori)==0:
                     continue
-                if len(contori)==2:
-                    cont = ( contori[1].replace("\n","") ).split(' ')
+                if len(contori) >0:
+                    contori_back = contori
+                    cont = ( contori[-1].replace("\n","") ).split(' ')
                     core=int(cont[0])
                     uncore=int(cont[1])
                     assert(core!=0 and uncore!=0)
                     record = []
-                    key = contori[0]
-                    # print(key)
+                    #print(contori_back)
+                    del(contori_back[-1])
+                    #print(contori_back)
+                    key = ''.join(contori_back)
+                    #for i in range(len(contori)):
+                    #    key += contori[i]
+
                     if key not in E_region.keys():
                         E_region[key]=([],[],[],[])
+                        #print(key)
                     for s in cont:
                         record.append(float(s))
                     I_train.append(record[:-1])
@@ -69,7 +78,6 @@ def read_data(benchmarks):
         #print(res[b])
     return res
 
-
 def filter_data(data, test_num, energy_threshold):
     res = {}
     for b in data.keys():
@@ -79,18 +87,20 @@ def filter_data(data, test_num, energy_threshold):
         E_region= data[b][2]
         for key in E_region.keys():
             if len(E_region[key][2]) != test_num:
-                # print("Remove region {0} as it has incorrect number of records ({1} data needed but has {2})".format(key, test_num, len(E_region[key][2])))
                 continue
             if min(E_region[key][2]) < energy_threshold:
-                # print("Remove region {0} as it has too small energy values ({1} J, threshold={2} J)".format(key, min(E_region[key][2]), energy_threshold))
                 continue
-            # now use the maximum core/uncore's papi counter value as input (typically the last record)
+
             papi_val = E_region[key][3][-1][2:]
+
             E_region_new[key] = (E_region[key][0],E_region[key][1],E_region[key][2],[])
             for i in range(0,len(E_region[key][0])):
-                    E_region_new[key][3].append([E_region_new[key][0][i], E_region_new[key][1][i]]+papi_val)
+                E_region_new[key][3].append([E_region_new[key][0][i], E_region_new[key][1][i]]+E_region[key][3][i][2:])
+                #print([E_region_new[key][0][i], E_region_new[key][1][i]]+E_region[key][3][i][2:])
+
             I_train += E_region_new[key][3]
             O_train += E_region_new[key][2]
+            #print(O_train)
             # I_train += E_region[key][3]
             # O_train += E_region[key][2]
             # E_region_new[key] = E_region[key]
@@ -107,6 +117,8 @@ def filter_data(data, test_num, energy_threshold):
         print("{0}: Removed {1} regions containing dirty data, Remain {2} regions.".format(b,len(E_region.keys())-len(E_region_new.keys()), len(E_region_new.keys())))
         res[b] = (I_train, O_train, E_region_new)
     return res
+
+
 
 
 # find the strange energy point, and get the average value from its neighber in matrix
@@ -161,28 +173,31 @@ def filter_energy(data):
             d_val4 = abs( E_val[orderuc1] - E_val[ordernum] )
             d_val = ( d_val3 + d_val4 ) / 2
             if d_val>max:
+                t = E_val[ordernum]
                 res[b][2][key][2][ordernum] = ( E_val[orderc1] + E_val[ordernum] + E_val[orderuc1] )/3   
-                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #corner right down
             ordernum = line*(c_max-c_min) + (uc_max-uc_min)
-            orderuc0 = line*(c_max-c_min) + (uc_max-(uc-min+1))
+            orderuc0 = line*(c_max-c_min) + (uc_max-(uc_min+1))
             orderc0 = line*(c_max-(c_min+1)) + (uc_max-uc_min)
             d_val1 = abs( E_val[orderc0] - E_val[ordernum] )
             d_val2 = abs( E_val[orderuc0] - E_val[ordernum] )
             d_val = ( d_val1 + d_val2 ) / 2
             if d_val>max:
+                t = E_val[ordernum]
                 res[b][2][key][2][ordernum] = ( E_val[orderc0] + E_val[ordernum] + E_val[orderuc0] )/3    
-                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #corner left down
-            ordernum = line*(c_max-uc_min)
-            orderuc1 = line*(c_max-uc_min) + 1
-            orderc0  = line*(c_max-(uc_min+1))
+            ordernum = line*(c_max-c_min)
+            orderuc1 = line*(c_max-c_min) + 1
+            orderc0  = line*(c_max-(c_min+1))
             d_val1 = abs( E_val[orderc0] - E_val[ordernum] )
             d_val4 = abs( E_val[orderuc1] - E_val[ordernum] )
             d_val = ( d_val1 + d_val4 ) / 2
             if d_val>max:
+                t = E_val[ordernum]
                 res[b][2][key][2][ordernum] = ( E_val[orderc0] + E_val[ordernum] + E_val[orderuc1] )/3
-                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #corner  right up
             ordernum = uc_max - uc_min
             orderuc0 = uc_max - ( uc_min+1 )
@@ -191,8 +206,9 @@ def filter_energy(data):
             d_val3 = abs( E_val[orderc1] - E_val[ordernum] )
             d_val = ( d_val2 + d_val3 ) / 2
             if d_val>max:
+                t = E_val[ordernum]
                 res[b][2][key][2][ordernum] = ( E_val[orderc1] + E_val[ordernum] + E_val[orderuc0] )/3
-                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #topline
             for uc in range(uc_min+1,uc_max):
                 c = c_min
@@ -205,8 +221,9 @@ def filter_energy(data):
                 d_val4 = abs( E_val[orderuc1] - E_val[ordernum] )
                 d_val = ( d_val2 + d_val3 + d_val4 ) / 3
                 if d_val>max:
+                    t = E_val[ordernum]
                     res[b][2][key][2][ordernum] = ( E_val[orderuc0] + E_val[orderc1] + E_val[ordernum] + E_val[orderuc1] )/4
-                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #downline
             for uc in range(uc_min+1,uc_max):
                 c = c_max
@@ -220,8 +237,9 @@ def filter_energy(data):
 
                 d_val = ( d_val1 + d_val2 + d_val4 ) / 3
                 if d_val>max:
+                    t = E_val[ordernum]
                     res[b][2][key][2][ordernum] = ( E_val[orderuc0] + E_val[ordernum] + E_val[orderuc1] + E_val[orderuc0] )/4
-                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
 
             #leftline 
             for c in range(c_min+1,c_max):
@@ -237,8 +255,9 @@ def filter_energy(data):
 
                 d_val = ( d_val1 + d_val3 + d_val4 ) / 3
                 if d_val>max:
+                    t = E_val[ordernum]
                     res[b][2][key][2][ordernum] = ( E_val[orderuc0] + E_val[orderc1] + E_val[ordernum]  + E_val[orderuc1] )/4
-                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #rightline
             for c in range(c_min+1,c_max):
                 uc = uc_max
@@ -253,8 +272,9 @@ def filter_energy(data):
 
                 d_val = ( d_val1 + d_val2 + d_val3 ) / 3
                 if d_val>max:
+                    t = E_val[ordernum]
                     res[b][2][key][2][ordernum] = ( E_val[orderuc0] + E_val[orderc1] + E_val[ordernum] + E_val[orderuc0] )/4
-                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )
+                    f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
             #middle pot
             for c in range(c_min+1,c_max-1):
                 for uc in range(uc_min+1,uc_max-1):
@@ -271,21 +291,25 @@ def filter_energy(data):
 
                     d_val = ( d_val1 + d_val2 + d_val3 + d_val4 ) / 4
                     if d_val>max:
+                        t = E_val[ordernum]
                         res[b][2][key][2][ordernum] = ( E_val[orderuc0] + E_val[orderc1] + E_val[ordernum] + E_val[orderuc0] + E_val[orderuc1] )/5   
-                        f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,E_val[ordernum],d_val,res[b][2][key][2][ordernum]) )            
+                        f.write( "Strange data: freq : {0}-{1};  Energy:{2}  dval:{3} ,newvalue{4}\n".format(c,uc,t,d_val,res[b][2][key][2][ordernum]) )
     f.close()
     return res
 
 def LOOCV_split_dataset(data):
     res = {}
     for b in data.keys():
+        #print(b)
         test_data = (np.array(data[b][0]), np.array(data[b][1]))
         I_train = []
         O_train = []
         for t in data.keys():
+            #print(t)
             if b!=t:
                 I_train += data[t][0]
                 O_train += data[t][1]
+                #print("________________________")
         train_data = (np.array(I_train), np.array(O_train))
         res[b] = (train_data, test_data)
     return res
@@ -390,10 +414,13 @@ def load(path):
     return model
 
 def LOOCV_test(data):
+    #print(data)
     datasets = LOOCV_split_dataset(data)
-    model = load("fine_tuneMLP.pkl")
+    #print(datasets)
+    print("111111111111111111")
+    # model = load("fine_tuneMLP.pkl")
     for b in datasets.keys():
-        # model = MLP_model_init()
+        model = MLP_model_init()
         # model = mlxstack()
         # extract dataset
         I_train = datasets[b][0][0]
@@ -401,6 +428,8 @@ def LOOCV_test(data):
         I_test  = datasets[b][1][0]
         O_test  = datasets[b][1][1]
         # training
+        #print(O_train)
+        model.fit(I_train,O_train)
         # prediction
         O_train_pred = model.predict(I_train)
         O_test_pred  = model.predict(I_test)
@@ -461,9 +490,6 @@ def save(model, name="MLP"):
     pickle.dump(model, open(name+'.pkl',"wb"))
 
 
-
-
-
 if __name__=="__main__":
     print("Reading Data...")
     #NPB_data = read_data(["BT", "CG", "EP", "FT", "MG", "SP", "IS"])
@@ -476,10 +502,19 @@ if __name__=="__main__":
     #NPB_data = read_data(["BT20", "CG", "EP", "FT", "IS", "MG","LU","UA", "BT-MZ", "SP-MZ","backprop","cfd20","heartwall","hotspot","hotspot3D","leukocyte","lud","lavaMD","nn20","nw20","particlefilter","pathfinder","srad","streamcluster20"])
     #NPB_data = read_data(["BT20", "CG", "EP", "IS","FT",  "MG","LU","UA", "BT-MZ", "SP-MZ","backprop","cfd","heartwall","hotspot","hotspot3D","leukocyte","lud","lavaMD","nn","nw","particlefilter","pathfinder","srad","streamcluster20"])
     #NPB_data = read_data(["BT","CG","EP","FT","IS","MG","BT-MZ","SP-MZ"])
-    NPB_data = read_data(["QuEST" , "mgo"])
-    print("Filter dirty data...")
-    NPB_data = filter_data(NPB_data, (22-8+1)*(20-7+1), 20)
+    NPB_data = read_data(["bt.out","cg.out"])
 
+    print("Filter dirty data...")
+    NPB_data = filter_data(NPB_data, (22-8+1)*(20-7+1), 5)
+
+    print("find stgdata")
+    NPB_data = filter_energy(NPB_data)
+
+    f = open("predresult", "w")
+
+    print("Begin LOOCV test")
+    LOOCV_test(NPB_data)
+'''
     f = open("predresult","w")
 
     print("find stgdata")
@@ -493,5 +528,6 @@ if __name__=="__main__":
     model = train(NPB_data)
     print("INFO: Save model to ./MLP.pkl")
     save(model, "MLP")
+
 '''
-'''
+
