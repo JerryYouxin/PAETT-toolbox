@@ -63,20 +63,22 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
             shutil.rmtree(out_dir)
         os.mkdir(out_dir)
     # add single thread execution as baseline
-    print("Running with {0} Thread".format(start))
+    print("Running with {0} Thread: ".format(start), end='')
     cct = None
     #cct = thread_exec(exe, keymap_fn, 1, papi, cct, out_dir, enable_continue)
     cct = thread_exec(exe, keymap_fn, start, papi, cct, out_dir, enable_continue)
     energy = get_cct_energy(cct)
+    print("Energy {0} Joules".format(energy))
     if start==1 and step!=1:
         start = 0
     for i in range(start+step, end+1, step):
-        print("Running with {0} Thread".format(i))
+        print("Running with {0} Thread: ".format(i), end='')
         cct_tmp = None
         cct_tmp = thread_exec(exe, keymap_fn, i, papi, cct_tmp, out_dir, enable_continue)
         # thread configuration must be consistant across all ccts
         if enable_consistant_thread:
             etmp = get_cct_energy(cct_tmp)
+            print("Energy {0} Joules".format(etmp))
             if etmp < energy:
                 cct = cct_tmp
                 energy = etmp

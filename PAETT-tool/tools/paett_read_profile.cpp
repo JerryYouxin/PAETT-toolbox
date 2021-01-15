@@ -81,7 +81,7 @@ unknown:
 }
 
 void print_cct(CallingContextLog* root, bool print_data, string pre="") {
-    printf("%s+ %s",pre.c_str(), keyMap[root->key].c_str());
+    printf("%s+ %s[ID=%lx]",pre.c_str(), keyMap[root->key].c_str(), root->key);
     if(root->pruned) {
         printf(" (pruned)");
     }

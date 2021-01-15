@@ -51,9 +51,9 @@ def execute(exe, tnum, core, uncore, keymap_fn, out_dir='./', papi_events=[], cc
     subprocess.check_call(exe, shell=True)
     subprocess.check_call("rm -rf "+res_fn, shell=True)
     if keymap_fn is not None:
-        cmd = "filter_significant_profile --keymap_fn "+keymap_fn + " > " + res_fn
+        cmd = "filter_significant_profile --keymap_fn "+keymap_fn + " > " + res_fn + " 2>" + (res_fn+".err")
     else:
-        cmd = "filter_significant_profile > " + res_fn
+        cmd = "filter_significant_profile > " + res_fn + " 2>" + (res_fn+".err")
     subprocess.check_call(cmd, shell=True)
     return res_fn
 

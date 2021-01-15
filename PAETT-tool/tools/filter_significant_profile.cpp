@@ -10,14 +10,20 @@
 using namespace std;
 unordered_map<uint64_t, string> keyMap;
 
+int warn_count = 0;
+
 struct options_struct {
     string prof_fn;
     string keymap_fn;
     bool print_coverage;
+    bool werror;
+    bool nowarn;
     options_struct() : 
         prof_fn(PAETT_PERF_INSTPROF_FN".0"),
         keymap_fn(KEYMAP_FN".0"),
-        print_coverage(false)
+        print_coverage(false),
+        werror(false),
+        nowarn(false)
     {}
 } options;
 
@@ -40,6 +46,8 @@ void usage() {
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's profile, the default value is %s\n", PAETT_PERF_INSTPROF_FN".0");
     printf("\t\t--prof_fn <path/to/profile>\t:set path to PAETT's keymap file, the default value is %s\n", KEYMAP_FN".0");
     printf("\t\t--print-coverage\t:calculate and print coverage of significant regions\n");
+    printf("\t\t--Werror\t:set to stop and report for error when warning is detected\n");
+    printf("\t\t--no-warn\t:set to skip all warning\n");
 }
 
 void parse_args(int argc, char* argv[]) {
@@ -64,7 +72,11 @@ void parse_args(int argc, char* argv[]) {
             options.keymap_fn = string(argv[i]);
         } else if(opt==string("--print-coverage")) {
             options.print_coverage = true;
-        } else {
+        } else if(opt==string("--Werror")) {
+            options.werror = true;
+        } else if(opt==string("--no-warn")) {
+            options.nowarn = true;
+        }else {
             goto unknown;
         }
     }
@@ -117,12 +129,26 @@ void print_significant(CallingContextLog* root, std::string pre="") {
     if(!root->pruned) {
         CallingContextLog* p = root->__getFirstNode();
         if(keyMap[p->key]=="") {
-            printf("\nError: empty key string detected for key value %ld!\n",p->key);
-            while(p!=NULL) {
-                printf("%s=>",keyMap[p->key].c_str());
-                p = p->parent;
+            warn_count++;
+            if(options.werror) {
+                fprintf(stderr, "Error: empty key string detected for key value %ld!\n",p->key);
+                while(p!=NULL) {
+                    printf("%s=>",keyMap[p->key].c_str());
+                    p = p->parent;
+                }
+                printf("\n");
+                exit(1);
             }
-            exit(1);
+            if(!options.nowarn) {
+                fprintf(stderr, "\nWarning: empty key string detected for key value %ld. Ignore this CCT\n",p->key);
+                fprintf(stderr, "         ");
+                while(p!=NULL) {
+                    fprintf(stderr,"%s=>",keyMap[p->key].c_str());
+                    p = p->parent;
+                }
+                fprintf(stderr, "\n");
+            }
+            return;
         }
         while(p!=p->next) {
             __print_node(p, pre);
@@ -212,6 +238,9 @@ int main(int argc, char* argv[]) {
     } else {
         root->reset();
         print_significant(root);
+        if(warn_count>0) {
+            fprintf(stderr, "Total Warn: %d\n", warn_count);
+        }
     }
     return 0;
 }
