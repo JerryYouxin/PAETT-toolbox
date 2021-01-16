@@ -9,7 +9,7 @@ MAX_PAPI_COUNTER_PER_RUN=4
 
 def get_cct_energy(cct):
     def get_energy(data):
-        return data.data[-1]
+        return float(data.data[-1])
     return cct.mergeBy(get_energy)
 
 def mergeMetrics(data1, data2):
@@ -63,7 +63,7 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
             shutil.rmtree(out_dir)
         os.mkdir(out_dir)
     # add single thread execution as baseline
-    print("Running with {0} Thread: ".format(start), end='')
+    print("Running with {0} Thread: ".format(start), end='', flush=True)
     cct = None
     #cct = thread_exec(exe, keymap_fn, 1, papi, cct, out_dir, enable_continue)
     cct = thread_exec(exe, keymap_fn, start, papi, cct, out_dir, enable_continue)
@@ -72,7 +72,7 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
     if start==1 and step!=1:
         start = 0
     for i in range(start+step, end+1, step):
-        print("Running with {0} Thread: ".format(i), end='')
+        print("Running with {0} Thread: ".format(i), end='', flush=True)
         cct_tmp = None
         cct_tmp = thread_exec(exe, keymap_fn, i, papi, cct_tmp, out_dir, enable_continue)
         # thread configuration must be consistant across all ccts
