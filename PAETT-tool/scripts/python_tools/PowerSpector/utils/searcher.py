@@ -68,6 +68,7 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
     #cct = thread_exec(exe, keymap_fn, 1, papi, cct, out_dir, enable_continue)
     cct = thread_exec(exe, keymap_fn, start, papi, cct, out_dir, enable_continue)
     energy = get_cct_energy(cct)
+    best_thread = start
     print("Energy {0} Joules".format(energy))
     if start==1 and step!=1:
         start = 0
@@ -82,6 +83,7 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
             if etmp < energy:
                 cct = cct_tmp
                 energy = etmp
+                best_thread = i
                 print("Update Best as ", i)
         else:
             cct.mergeFrom(cct_tmp, rule=reserveMinimalEnergy)
@@ -99,6 +101,8 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
             print("Save thread optimized cct to ", cct_file)
             with open(cct_file, 'w') as f:
                 cct.save(f)
+    if enable_consistant_thread:
+        return best_thread
     return cct
 
 class StaticThreadSearcher: 

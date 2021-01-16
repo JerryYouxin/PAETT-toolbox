@@ -132,8 +132,11 @@ def main():
     assert(len(papi)>0)
     with open(args.out, "w") as f:
         print("The collected data will be written into: ", args.out)
-        threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
-        data = collectData(args.exe, args.keymap, 0, -1, -1, cct_file='thread.cct', enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
+        best_thread = threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
+        if args.consistant:
+            data = collectData(args.exe, args.keymap, best_thread, -1, -1, enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
+        else:
+            data = collectData(args.exe, args.keymap, 0, -1, -1, cct_file='thread.cct', enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
         write_metrics(f, data)
 
 if __name__=='__main__':
