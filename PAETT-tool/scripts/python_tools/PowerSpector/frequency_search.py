@@ -12,11 +12,13 @@ import argparse
 MAX_PAPI_COUNTER_PER_RUN=4
 
 def convert_format(format):
-    format=format.replace('<thread>', '{0}')
-    format=format.replace('<core>'  , '{1}')
-    format=format.replace('<uncore>', '{2}')
-    format=format.replace('<papi>'  , '{3}')
-    format=format.replace('<energy>', '{4}')
+    print("before: ", format)
+    format = format.replace('<thread>', '{0}')
+    format = format.replace('<core>'  , '{1}')
+    format = format.replace('<uncore>', '{2}')
+    format = format.replace('<papi>'  , '{3}')
+    format = format.replace('<energy>', '{4}')
+    print("after : ", format)
     return format
 
 def write_metrics(f, data, format="<thread> <core> <uncore> <papi> <energy>"):
@@ -33,19 +35,14 @@ def write_metrics(f, data, format="<thread> <core> <uncore> <papi> <energy>"):
         buff = cont[0]+';' + convert_format(format).format(t, c, u, papi, energy)
         f.write(buff+'\n')
 
+def keyToID_lx(key, keyMap):
+    ID = keyMap[key]
+    if ID < 0:
+        ID = pow(2, 64) + ID
+    return str(hex(ID)[2:])
+
 # tnum, core, uncore: -1 indicates iterating all possible configurations; 0 indicates using default; >0 indicates the specified configuration
-def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, check_point_dir=None, collect_energy=True, enable_cct=True, enable_continue=False, VERBOSE=1):
-    print("The checkpoint directory is set to: ", check_point_dir)
-    if check_point_dir is not None:
-        if enable_continue:
-            if not os.path.exists(check_point_dir):
-                print("Warning: continue enabled but no existing output directory found! Disable continue and restart searching.")
-                enable_continue = False
-                os.mkdir(check_point_dir)
-        else:
-            if os.path.exists(check_point_dir):
-                shutil.rmtree(check_point_dir)
-            os.mkdir(check_point_dir)
+def region_frequency_search(exe, keymap_fn, tnum, core, uncore, cct_file=None, collect_energy=True, enable_continue=False, VERBOSE=1):
     out_dir = 'metrics/'
     if enable_continue:
         if not os.path.exists(out_dir):
@@ -71,11 +68,11 @@ def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, chec
         tnumList.append(tnum)
     else:
         tnumList = [ i for i in range(1, config.get_max_thread()+1) ]
-    data = []
+    data = {}
+    keyMap = load_keyMap(keymap_fn)
     print("Thread:", tnumList)
     print("Core  :", coreList)
     print("Uncore:", uncoreList)
-    print("PAPI  :", papi)
     tot = len(tnumList)*len(coreList)*len(uncoreList)
     num = 0.0
     for t in tnumList:
@@ -87,71 +84,58 @@ def collectData(exe, keymap_fn, tnum, core, uncore, papi=[], cct_file=None, chec
                     print("[{0:.1%}] Running with {1} thread, {2} core, {3} uncore".format(num/tot,t,c,u), end='\r')
                     num += 1
                 cct_tmp = None
-                nrun = int((len(papi) + MAX_PAPI_COUNTER_PER_RUN - 1) / MAX_PAPI_COUNTER_PER_RUN)
-                for i in range(0, nrun):
-                    papi_self = papi[i*MAX_PAPI_COUNTER_PER_RUN:(i+1)*MAX_PAPI_COUNTER_PER_RUN]
-                    res_fn = get_metric_name(out_dir, c, u, t, i)
-                    if not (enable_continue or os.path.exists(res_fn)):
-                        res_fn = execute(exe, t, c, u, keymap_fn, out_dir, res_fn=res_fn, papi_events=papi_self, collect_energy=True, cct_fn=cct_file)
-                    file = open(res_fn, 'r')
-                    __cct_tmp = CallingContextTree.load(file)
-                    file.close()
-                    if cct_tmp is None:
-                        cct_tmp = __cct_tmp
-                    else:
-                        cct_tmp.mergeFrom(__cct_tmp, rule=mergeMetrics)
-                # Now we add thread information into the data domain
-                # If t, u, c=0, the thread number information is not needed by the user
-                # if t>0:
-                cct_tmp.processAllDataWith(addThreadInfo, t)
-                # if u>0:
-                cct_tmp.processAllDataWith(addThreadInfo, u)
-                # if c>0:
-                cct_tmp.processAllDataWith(addThreadInfo, c)
+                res_fn = get_metric_name(out_dir, c, u, t)
+                if not (enable_continue or os.path.exists(res_fn)):
+                    res_fn = execute(exe, t, c, u, keymap_fn, out_dir, res_fn=res_fn, collect_energy=True, cct_fn=cct_file)
+                file = open(res_fn, 'r')
+                cct_tmp = CallingContextTree.load(file)
+                cct_tmp.processAllDataWith(lambda dat:AdditionalData([float(d) for d in dat.data]))
+                file.close()
                 # extract to list
-                lst = cct_tmp.extractToList(enable_cct)
-                if check_point_dir is not None:
-                    with open(check_point_dir+'/metric.{0}.{1}.{2}'.format(t,u,c), "w") as f:
-                        write_metrics(f, lst)
-                data += lst
+                lst = cct_tmp.extractToList(False)
+                for cont in lst:
+                    if cont[0] in data.keys():
+                        if cont[-1] < data[cont[0]][0]:
+                            data[cont[0]][0] = cont[-1]
+                            data[cont[0]][1] = keyToID_lx(cont[0], keyMap) + " " + cont[0] + ";" + str(c) + " " + str(u) + " " + str(t) + " 0 0 0\n"
+                    else:
+                        data[cont[0]] = [ cont[-1], 
+                                          keyToID_lx(cont[0], keyMap) + " " + cont[0] + ";" + str(c) + " " + str(u) + " " + str(t) + " 0 0 0\n" 
+                                          ]
+    # extract to list
+    freqComm = []
+    for key, d in data.items():
+        freqComm.append(d[1])
     print("\nFinish!")
-    return data
+    return freqComm
 
 def main():
     default_step = 1
     if config.get_max_thread() > 10:
         default_step = 2
-    parser = argparse.ArgumentParser(description='Execute scripts to collect CCT-aware metrics.')
+    parser = argparse.ArgumentParser(description='Execute scripts to search for optimal region-based frequency commands.')
     parser.add_argument('--exe', help='executable compiled with powerspector\'s instrumentation', default='./run.sh')
     parser.add_argument('--keymap', help='keymap generated by the powerspector (with detection mode)', default='PAETT.keymap')
     parser.add_argument('--continue', dest='cont', help='skip execution if the output file is already exist.', action='store_true')
     parser.add_argument('--consistant', help='thread configuration is consistant through all CCTs.', action='store_true')
-    #parser.add_argument('--ts', help='start number of threads for searching', type=int, default=2)
     parser.add_argument('--ts', help='start number of threads for searching', type=int, default=1)
     parser.add_argument('--te', help='end number of threads for searching', type=int, default=config.get_max_thread())
     parser.add_argument('--step', help='step of number of threads when searching', type=int, default=default_step)
-    parser.add_argument('--out', help='output file', default='metric.out')
-    parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='')
-    parser.add_argument('--format', help='output format of metrics, including <thread>, <core>, <uncore>, <papi>, <energy>', default='<core> <uncore> <papi> <energy>')
+    parser.add_argument('--out', help='output file', default='frequency_commands.opt')
     args = parser.parse_args()
 
-    check_point_dir = args.out.split('/')
-    if len(check_point_dir) > 1:
-        check_point_dir = "/".join(check_point_dir[:-1])
-    else:
-        check_point_dir = './'
-    check_point_dir = check_point_dir+'/checkpoints/'
+    if not args.cont:
+        print("FETAL ERROR: Currently, we only support searching for frequency commands from collected data. Please run collect_data first")
+        exit(1)
 
-    papi = args.papi.split(',')
-    assert(len(papi)>0)
     with open(args.out, "w") as f:
         print("The collected data will be written into: ", args.out)
         best_thread = threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
         if args.consistant:
-            data = collectData(args.exe, args.keymap, best_thread, -1, -1, enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
+            data = region_frequency_search(args.exe, args.keymap, best_thread, -1, -1, enable_continue=args.cont)
         else:
-            data = collectData(args.exe, args.keymap, 0, -1, -1, cct_file='thread.cct', enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
-        write_metrics(f, data, args.format)
+            data = region_frequency_search(args.exe, args.keymap, 0, -1, -1, cct_file='thread.cct', enable_continue=args.cont)
+        f.writelines(data)
 
 if __name__=='__main__':
     main()

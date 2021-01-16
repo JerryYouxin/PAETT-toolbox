@@ -1,5 +1,5 @@
 #!/bin/bash
-if [[ "$@" =~ "-c" ]]; then
+if [[ "$@" =~ " -c" ]]; then
   flang -g -Xclang -paett-inst $@
 else
   flang -g -Xclang -paett-inst -lx86_adapt -lx86_energy -lpapi -lpaett_inst -L`dirname $0`/../lib $@

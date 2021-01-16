@@ -40,7 +40,8 @@ def thread_exec(exe, keymap_fn, tnum, papi, cct, out_dir, enable_continue):
                 cct.mergeFrom(cct_tmp, rule=mergeMetrics)
     else:
         res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), tnum, 0)
-        res_fn = execute(exe, tnum, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, res_fn=res_fn, papi_events=[], collect_energy=True)
+        if not (enable_continue or os.path.exists(res_fn)):
+            res_fn = execute(exe, tnum, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, res_fn=res_fn, papi_events=[], collect_energy=True)
         file = open(res_fn, 'r')
         cct = CallingContextTree.load(file)
         file.close()

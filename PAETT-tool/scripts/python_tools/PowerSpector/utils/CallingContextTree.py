@@ -315,12 +315,12 @@ class CallingContextTree:
 
     def extractDataByReg(self, res):
         if self.name not in res.keys():
-            res[self.name] = [self.data]
+            res[self.name] = [self.data.data]
         else:
-            res[self.name]+= [self.data]
+            res[self.name]+= [self.data.data]
         for _, cct in self.child.items():
             for n in cct.getIterator():
-                res[self.name] += n.extractDataToList(False)
+                n.extractDataByReg(res)
 
     def extractToList(self, enable_cct):
         if enable_cct:
@@ -336,8 +336,8 @@ class CallingContextTree:
             metrics += [ 0 for i in range(0, length) ]
             for data in dlist:
                 for i in range(0, len(data)):
-                    metrics[i] += data[i]
-            lst += metrics
+                    metrics[i+1] += data[i]
+            lst += [ metrics ]
         return lst
 
     def save(self, file, delimiter=';', pre=''):
