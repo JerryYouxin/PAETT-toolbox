@@ -128,8 +128,8 @@ def main():
         print("FETAL ERROR: Currently, we only support searching for frequency commands from collected data. Please run collect_data first")
         exit(1)
 
+    print("The generated frequency commands will be written into: ", args.out)
     with open(args.out, "w") as f:
-        print("The collected data will be written into: ", args.out)
         best_thread = threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
         if args.consistant:
             data = region_frequency_search(args.exe, args.keymap, best_thread, -1, -1, enable_continue=args.cont)

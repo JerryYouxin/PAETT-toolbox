@@ -149,3 +149,11 @@ Support collect total energy consumption of the execution, similiar with `perf s
 ```
 Usage: collect_energy [-a <#warmup> <#evaluation>] <exe> <args>
 ```
+
+### freq_search
+
+Search for optimal CCT-aware frequency commands or optimal static configurations for a certain application.
+
+```
+Usage: freq_search [--static] [--exaustive] [--run=<run.sh>] [--consistant-thread] -o <output filename>
+```
