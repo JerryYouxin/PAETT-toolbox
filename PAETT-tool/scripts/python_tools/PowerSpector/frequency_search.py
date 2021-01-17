@@ -121,7 +121,7 @@ def main():
     parser.add_argument('--ts', help='start number of threads for searching', type=int, default=1)
     parser.add_argument('--te', help='end number of threads for searching', type=int, default=config.get_max_thread())
     parser.add_argument('--step', help='step of number of threads when searching', type=int, default=default_step)
-    parser.add_argument('--out', help='output file', default='frequency_commands.opt')
+    parser.add_argument('--out', help='output file', default='paett_model.cache')
     args = parser.parse_args()
 
     if not args.cont:

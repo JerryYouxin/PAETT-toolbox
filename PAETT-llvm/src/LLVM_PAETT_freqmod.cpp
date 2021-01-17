@@ -155,7 +155,7 @@ namespace {
                         FreqCommand_t command = adapter.getFreqCommand(utils.ins2string(&(*BI)));
                         if(isInvalidFreqCommand(command)) continue; // quick pass when the command is invalid
                         // printf("Matched [%s]: ",utils.ins2string(&(*BI)).c_str());
-                        printf("getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key.c_str(),
+                        printf("INFO: getFreqCommand:[%s, pre=(%ld, %ld, %ld), post=(%ld, %ld, %ld)]\n",command.key.c_str(),
                             command.pre.core,command.pre.uncore,command.pre.thread,
                             command.post.core,command.post.uncore,command.post.uncore);
                         if(auto *op=dyn_cast<CallInst>(&(*BI))) {
@@ -265,7 +265,9 @@ namespace {
             uint64_t uncore = command.uncore; // MAKE_UNCORE_VALUE_BY_FREQ(uncoreFreq);
             if(core || uncore) {
                 // modify core and uncore frequency
+#ifdef DEBUG_PAETT
                 errs() << "Insert CORE UNCORE frequency mod " << core << " " << uncore << "\n";
+#endif
                 Instruction *freqmodInst = CallInst::Create(hookCUFreqModAll, { ConstantInt::get(Type::getInt64Ty(C), core), ConstantInt::get(Type::getInt64Ty(C), uncore) } );
                 freqmodInst->insertBefore(insPos);
             } else {

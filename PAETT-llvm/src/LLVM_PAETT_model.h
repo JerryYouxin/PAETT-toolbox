@@ -114,23 +114,31 @@ namespace {
             char buff[200];
             while(EOF!=(r0=fscanf(cache, "%lx ", &key))) {
                 // fscanf(cache, "%s", buff);
-                fscanf(cache, "%[^;];", buff);
+                r0=fscanf(cache, "%200[^;]", buff);
                 command.key = std::string(buff);
+                while(r0==200) {
+                    r0=fscanf(cache, "%200[^;]", buff);
+                    command.key += std::string(buff);
+                }
                 // fscanf(cache, "%lx",&command.key);
-                fscanf(cache, "%ld",&command.pre.core);
+                fscanf(cache, ";%ld",&command.pre.core);
                 fscanf(cache, "%ld",&command.pre.uncore);
                 fscanf(cache, "%ld",&command.pre.thread);
                 fscanf(cache, "%ld",&command.post.core);
                 fscanf(cache, "%ld",&command.post.uncore);
                 fscanf(cache, "%ld",&command.post.thread);
                 // fprintf(stdout,"%lx %lx %ld %ld %ld %ld %ld %ld\n",key, command.key,
+#ifdef DEBUG_PAETT
                 fprintf(stdout,"%lx %s %ld %ld %ld %ld %ld %ld\n",key, command.key.c_str(),
                     command.pre.core,command.pre.uncore, command.pre.thread,
                     command.post.core, command.post.uncore, command.post.thread);
+#endif
                 freqCommandMap[command.key] = command;
             }
+#ifdef DEBUG_PAETT
             printf("Read finish\n");
             printAllFreqCommand();
+#endif
         }
         // void writeFreqCommandMapToCache() {
         //     fprintf(cache,"%d ",1); // placeholder to inform the cache file is valid

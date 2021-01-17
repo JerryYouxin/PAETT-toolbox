@@ -1,0 +1,7 @@
+#!/bin/bash
+# for region-based frequency modification, we use instrumentation pass to insert function calls to freqmod library without CCT collection
+if [[ "$@" =~ " -c" ]]; then
+  flang -Xclang -paett-freqmod $@
+else
+  flang -Xclang -paett-freqmod -lpaett_freqmod -lx86_adapt -L`dirname $0`/../lib $@
+fi
