@@ -95,7 +95,7 @@ void __print_cct_node(CallingContextLog* root, bool print_data, string pre) {
 }
 
 void print_cct(CallingContextLog* root, bool print_data, string pre) {
-    if(!root->pruned) {
+    if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
         CallingContextLog* p = root->__getFirstNode();
         while(p!=p->next) {
             __print_cct_node(p, print_data, pre);
@@ -110,7 +110,7 @@ void print_cct(CallingContextLog* root, bool print_data, string pre) {
 }
 
 void __generate_filter(FILE* fp, CallingContextLog* root) {
-    if(!root->pruned) {
+    if(!root->pruned && root->data.cycle/root->data.ncall > PRUNE_THRESHOLD) {
         // fprintf(fp, "%s\n", keyMap[root->key].c_str());
         fprintf(fp, "%ld %d %s\n", root->key, (root->data.active_thread>1)?1:0, keyMap[root->key].c_str());
     }
