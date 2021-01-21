@@ -157,3 +157,13 @@ Search for optimal CCT-aware frequency commands or optimal static configurations
 ```
 Usage: freq_search [--static] [--exaustive] [--run=<run.sh>] [--consistant-thread] -o <output filename>
 ```
+
+## Training model
+
+### scripts/python_tools/model/pred.py
+
+Train model using the data collected by `Typical Workflow —— 5(Optional 2)` and `collect_data`. Set the path of `metric.out` by modifying the `read_data` function in python file
+
+```
+Usage: python3 pred.py
+```
