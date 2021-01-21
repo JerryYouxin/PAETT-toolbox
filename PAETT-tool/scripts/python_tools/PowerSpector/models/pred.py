@@ -2,12 +2,14 @@ import numpy as np
 import math
 import pickle
 import os
-'''
+import sys
+
+sys.path.append("..")
 from utils.Configuration import config
 from utils.executor import execute, get_metric_name
 from utils.CallingContextTree import CallingContextTree, AdditionalData, load_keyMap
 from utils.searcher import threadSearch, mergeMetrics, addThreadInfo
-'''
+
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_absolute_error
 from sklearn.preprocessing import StandardScaler
@@ -123,16 +125,14 @@ def filter_data(data, test_num, energy_threshold):
     return res
 
 
-
-
 # find the strange energy point, and get the average value from its neighber in matrix
-def filter_energy(data):
+def filter_energy(data,cmin,cmax,ucmin,ucmax):
     res = data
 
-    c_min = 8
-    c_max = 22
-    uc_min = 7
-    uc_max = 20
+    c_min = cmin
+    c_max = cmax
+    uc_min = ucmin
+    uc_max = ucmax
     line = uc_max - uc_min + 1
 
     f = open("strangepot","w")
@@ -498,7 +498,17 @@ def save(model, name="MLP"):
 
 
 if __name__=="__main__":
+
+    c_min = config.get_min_core()
+    c_max = config.get_max_core()
+    uc_min = config.get_min_uncore()
+    uc_max = config.get_max_uncore()
+
     print("Reading Data...")
+
+    dataset =  sys.argv[1]
+    print dataset
+
     #NPB_data = read_data(["BT", "CG", "EP", "FT", "MG", "SP", "IS"])
     #NPB_data = read_data(["BT", "CG", "EP", "FT", "LU", "MG", "SP", "UA", "IS","cfd","hotspot","nw","particlefilter","pathfinder","streamcluster"])
     #NPB_data = read_data(["BT", "CG", "EP", "FT", "LU", "MG", "SP", "UA","IS"])
@@ -517,13 +527,13 @@ if __name__=="__main__":
     print("Filter dirty data...")
     # define the values of core frequency and uncore frequency,and the threshold of energy value
     # filter_data( data , ( cf_max-cf_min+1 )*( ucf_max-ucf_min+1 ) , energy_threshold )
-    train_data = filter_data(train_data, (22-8+1)*(20-7+1), 5)
+    train_data = filter_data(train_data, (c_max-c_min+1)*(ucf_max-ucf_min+1), 5)
 
     print("find stgdata")
     # find the strange energy value and correct it by average the neighbor pot
     # one can set "max" in function filter_energy to scale the range
     # __set the values of core frequency and uncore frequency in function c_min\c_max\uc_min\uc_max
-    train_data = filter_energy(train_data)
+    train_data = filter_energy(train_data,c_min,c_max,uc_min,uc_max)
 
     # record the LOOCV_test result
     f = open("predresult", "w")
