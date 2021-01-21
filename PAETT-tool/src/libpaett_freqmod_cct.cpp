@@ -399,12 +399,12 @@ void FUNCNAME(PAETT_inst_enter)(uint64_t key) {
 }
 
 void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
-    //printf("[thread %d] THREAD_INIT...key=%ld\n",omp_get_thread_num(),key);
+    // printf("[thread %d] THREAD_INIT...key=%ld\n",omp_get_thread_num(),key);
     // if(root) root->printStack();
 #ifdef ENABLE_FINEGRANED_TUNING
     if(danger) return;
-    printf("OMP thread configuration: %d\n", omp_get_max_threads());
-    fflush(stdout);
+    // printf("OMP thread configuration: %d\n", omp_get_max_threads());
+    // fflush(stdout);
     if(root) {
         // printf("key %lx, thread %ld, core %ld, uncore %ld\n", key, root->data.thread, root->data.core, root->data.uncore);
 // #ifndef USE_NAMESPACE
@@ -434,8 +434,9 @@ void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
 }
 
 void FUNCNAME(PAETT_inst_thread_fini)(uint64_t key) {
+    if(root && root->key!=key) return;
     --danger;
-    //printf("[thread %d] THREAD_FINI...key=%ld\n",omp_get_thread_num(),key);
+    // printf("[thread %d] THREAD_FINI...key=%ld\n",omp_get_thread_num(),key);
 #ifdef ENABLE_FINEGRANED_TUNING
     if(danger) return;
     // if(root) {
