@@ -341,23 +341,13 @@ void FUNCNAME(PAETT_inst_init)() {
 }
 
 void FUNCNAME(PAETT_inst_exit)(uint64_t key) {
-    // fprintf(FLOG,"Exit %ld: danger=%d, root=%p\n", key, danger, root); fflush(FLOG);
-// #ifdef ENABLE_FINEGRANED_TUNING
-//     if(danger==1) {
-//         uint64_t core = core_default;
-//         uint64_t uncore = uncore_default;
-//         if(root!=NULL) {
-//             //printf("-- Thread %d Tuning core[%d]=%ld, uncore[%d]=%ld\n", __cpu, __cpu, root->data.core, __die, root->data.uncore);
-//             if(root->data.core) core = MIN_CORE_VALIE;
-//             if(root->data.uncore) uncore = MIN_UNCORE_VALIE;
-//         }
-//         PAETT_modCoreFreq(__cpu,core);
-//         PAETT_modUncoreFreq(__die, uncore);
-//     }
-// #endif
-    // printf("Thread %d Exit %d, danger=%d, cpu=%d\n", omp_get_thread_num(), key, danger, __cpu);
-    if(danger || root==NULL) return;
-    //printf("Exit key=%ld: thread %ld, core %ld, uncore %ld\n",key,root->data.thread, root->data.core, root->data.uncore);
+#ifdef DEBUG_PAETT
+    printf("Thread %d Exit %d, danger=%d, cpu=%d\n", omp_get_thread_num(), key, danger, __cpu);
+#endif
+    if(omp_in_parallel() || root==NULL) return;
+#ifdef DEBUG_PAETT
+    printf("Exit key=%ld: [%ld] thread %ld, core %ld, uncore %ld\n",key, root->key,root->data.thread, root->data.core, root->data.uncore);
+#endif
     if(root->key==key) {
         root = root->parent;
         __tuneTo(root);
@@ -365,51 +355,35 @@ void FUNCNAME(PAETT_inst_exit)(uint64_t key) {
 }
 
 void FUNCNAME(PAETT_inst_enter)(uint64_t key) {
-    // fprintf(FLOG,"Enter %ld: danger=%d, root=%p\n", key, danger, root); fflush(FLOG);
-// #ifdef ENABLE_FINEGRANED_TUNING
-//     if(__cpu==INVALID_CPU) {
-//         __cpu = omp_get_thread_num();
-//         __die = __get_mydie(__cpu);
-//         __cpu_bind_to(__cpu);
-//         printf("Thread %d bind to cpu %d of socket %d\n",__cpu, __cpu, __die);
-//         // if(__cpu==1 && root) { 
-//         //     printf("[DEBUG] key=%ld, core=%ld, uncore=%ld, thread=%ld\n",key, root->data.core, root->data.uncore, root->data.thread); 
-//         //     root->printStack(); 
-//         // }
-//     }
-//     if(danger==1) {
-//         uint64_t core = core_default;
-//         uint64_t uncore = uncore_default;
-//         if(root!=NULL) {
-//             //printf("-- Thread %d Tuning core[%d]=%ld, uncore[%d]=%ld\n", __cpu, __cpu, root->data.core, __die, root->data.uncore);
-//             if(root->data.core) core = root->data.core;
-//             if(root->data.uncore) uncore = root->data.uncore;
-//         }
-//         printf("-- Thread %d Tuning with (core=%ld, uncore=%ld)\n", __cpu, core, uncore);
-//         PAETT_modCoreFreq(__cpu,core);
-//         PAETT_modUncoreFreq(__die, uncore);
-//     }
-// #endif
-    // printf("Thread %d Enter %d, danger=%d, cpu=%d\n", omp_get_thread_num(), key, danger, __cpu);
-    if(danger || root==NULL) return;
-    //printf("BEFORE ENTER: CURRENT=%ld, (%ld %ld %ld), cur=%ld\n", root->key, root->data.core, root->data.uncore, root->data.thread, root->cur_index);
+#ifdef DEBUG_PAETT
+    printf("Thread %d Enter %d, danger=%d, cpu=%d\n", omp_get_thread_num(), key, danger, __cpu);
+#endif
+    if(omp_in_parallel() || root==NULL) return;
+#ifdef DEBUG_PAETT
+    printf("BEFORE ENTER: CURRENT=%ld, (%ld %ld %ld), cur=%ld\n", root->key, root->data.core, root->data.uncore, root->data.thread, root->cur_index);
+#endif
     root = root->getOrInsertChild(key);
-    //printf("Enter key=%ld: thread %ld, core %ld, uncore %ld, cur=%ld, start=%ld, end=%ld\n",key,root->data.thread, root->data.core, root->data.uncore, root->cur_index, root->start_index, root->end_index);
+#ifdef DEBUG_PAETT
+    printf("Enter key=%ld: thread %ld, core %ld, uncore %ld, cur=%ld, start=%ld, end=%ld\n",key,root->data.thread, root->data.core, root->data.uncore, root->cur_index, root->start_index, root->end_index);
+#endif
     __tuneTo(root);
 }
 
 void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
-    // printf("[thread %d] THREAD_INIT...key=%ld\n",omp_get_thread_num(),key);
-    // if(root) root->printStack();
+#ifdef DEBUG_PAETT
+    printf("[thread %d] THREAD_INIT...key=%ld\n",omp_get_thread_num(),key);
+    if(root) root->printStack();
+#endif
 #ifdef ENABLE_FINEGRANED_TUNING
-    if(danger) return;
+    // if(danger) return;
+    if(omp_in_parallel()) return;
     // printf("OMP thread configuration: %d\n", omp_get_max_threads());
     // fflush(stdout);
     if(root) {
-        // printf("key %lx, thread %ld, core %ld, uncore %ld\n", key, root->data.thread, root->data.core, root->data.uncore);
-// #ifndef USE_NAMESPACE
+#ifdef DEBUG_PAETT
+        printf("key %lx, thread %ld, core %ld, uncore %ld\n", key, root->data.thread, root->data.core, root->data.uncore);
+#endif
         root = root->getOrInsertChild(key);
-// #endif
         uint64_t core = core_default;
         uint64_t uncore = uncore_default;
         if(root->data.core) core = root->data.core;
@@ -434,42 +408,15 @@ void FUNCNAME(PAETT_inst_thread_init)(uint64_t key) {
 }
 
 void FUNCNAME(PAETT_inst_thread_fini)(uint64_t key) {
+#ifdef DEBUG_PAETT
+    printf("[thread %d] THREAD_FINI...key=%ld, root->key=%ld\n",omp_get_thread_num(),key, root?root->key:NULL);
+#endif
     if(root && root->key!=key) return;
     --danger;
-    // printf("[thread %d] THREAD_FINI...key=%ld\n",omp_get_thread_num(),key);
+    if(omp_in_parallel()) return;
 #ifdef ENABLE_FINEGRANED_TUNING
-    if(danger) return;
-    // if(root) {
-    //     if(root->parent->key!=key) root = root->parent;
-    //     if(root->data.thread!=0) {
-    //         PAETT_modOMPThread(root->data.thread);
-    //         //__cpu_bind_to_range(0, root->data.thread);
-    //         // __tune_with_affinity(CPU_Affinity_t::CLOSE, root->data.thread, root->data.core, root->data.uncore);
-    //     // } else {
-    //     //     // must be a non-parallel region, so back to serial
-    //     //     // __tune_with_affinity(CPU_Affinity_t::CLOSE, 1, root->data.core, root->data.uncore);
-    //     }
-    //     for(int i=0;i<ncpu;++i) {
-    //         if(i!=__cpu) {
-    //             //PAETT_modCoreFreq(i,MIN_CORE_VALIE);
-    //             //PAETT_modUncoreFreq(i,MIN_UNCORE_VALIE);
-    //         }
-    //     }
-    //     __tuneTo(root);
-    // } else {
-    //     for(int i=0;i<ncpu;++i) {
-    //         if(i!=__cpu) {
-    //             //PAETT_modCoreFreq(i,MIN_CORE_VALIE);
-    //             //PAETT_modUncoreFreq(i,MIN_UNCORE_VALIE);
-    //         }
-    //     }
-    //     PAETT_modCoreFreq(__cpu,core_default);
-    //     PAETT_modUncoreFreq(__die, uncore_default);
-    // }
-#ifndef USE_NAMESPACE
     if(root) root = root->parent;
     __tuneTo(root);
-#endif
 #else
     FUNCNAME(PAETT_inst_exit)(key);
 #endif

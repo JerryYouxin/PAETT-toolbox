@@ -478,12 +478,13 @@ void PAETT_inst_thread_init(uint64_t key) {
     assert(cur[tid]);
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_thread_init)(key);
+        enable_freqmod = false;
+        PAETT_inst_enter(key);
+        enable_freqmod = true;
     }
-    // if(cur[tid]->key!=key) {
-    //     PAETT_inst_enter(key);
-    //     // printf("After Enter: thread_init for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
-    // }
-    PAETT_inst_enter(key);
+    else {
+        PAETT_inst_enter(key);
+    }
     ++danger;
     // // we should have already called PAETT_inst_enter
     // assert(cur[tid]);
@@ -498,9 +499,13 @@ void PAETT_inst_thread_fini(uint64_t key) {
     int tid = 0;//GET_THREADID;
     if(GET_THREADID==main_thread_id) --danger;
     // printf("thread_exit for 0x%lx @ 0x%lx\n",key,cur[tid]->key); fflush(stdout);
-    PAETT_inst_exit(key);
     if(enable_freqmod) {
         freqmod_cct::FUNCNAME(PAETT_inst_thread_fini)(key);
+        enable_freqmod = false;
+        PAETT_inst_exit(key);
+        enable_freqmod = true;
+    } else {
+        PAETT_inst_exit(key);
     }
 }
 #endif
