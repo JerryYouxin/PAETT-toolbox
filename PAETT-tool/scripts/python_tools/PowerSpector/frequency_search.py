@@ -11,6 +11,12 @@ import argparse
 # For Haswell, only 4 PAPI counters are valid to collect per run.
 MAX_PAPI_COUNTER_PER_RUN=4
 
+def make_core(c):
+    return c*100000
+
+def make_uncore(u):
+    return u*256+u
+
 def convert_format(format):
     print("before: ", format)
     format = format.replace('<thread>', '{0}')
@@ -84,9 +90,13 @@ def region_frequency_search(exe, keymap_fn, tnum, core, uncore, cct_file=None, c
                     print("[{0:.1%}] Running with {1} thread, {2} core, {3} uncore".format(num/tot,t,c,u), end='\r')
                     num += 1
                 cct_tmp = None
-                res_fn = get_metric_name(out_dir, c, u, t)
+                res_fn = get_metric_name(out_dir, c, u, t, 0)
+                if (not os.path.exists(res_fn)) and os.path.exists('.'.join(res_fn.split('.')[:-1])):
+                    res_fn = '.'.join(res_fn.split('.')[:-1])
                 if not (enable_continue or os.path.exists(res_fn)):
-                    res_fn = execute(exe, t, c, u, keymap_fn, out_dir, res_fn=res_fn, collect_energy=True, cct_fn=cct_file)
+                    print("FETAL ERROR: metrics not found!")
+                    exit(1)
+                    # res_fn = execute(exe, t, c, u, keymap_fn, out_dir, res_fn=res_fn, collect_energy=True, cct_fn=cct_file)
                 file = open(res_fn, 'r')
                 cct_tmp = CallingContextTree.load(file)
                 cct_tmp.processAllDataWith(lambda dat:AdditionalData([float(d) for d in dat.data]))
@@ -97,10 +107,10 @@ def region_frequency_search(exe, keymap_fn, tnum, core, uncore, cct_file=None, c
                     if cont[0] in data.keys():
                         if cont[-1] < data[cont[0]][0]:
                             data[cont[0]][0] = cont[-1]
-                            data[cont[0]][1] = keyToID_lx(cont[0], keyMap) + " " + cont[0] + ";" + str(c) + " " + str(u) + " " + str(t) + " 0 0 0\n"
+                            data[cont[0]][1] = keyToID_lx(cont[0], keyMap) + " " + cont[0] + ";" + str(make_core(c)) + " " + str(make_uncore(u)) + " " + str(t) + " 0 0 0\n"
                     else:
                         data[cont[0]] = [ cont[-1], 
-                                          keyToID_lx(cont[0], keyMap) + " " + cont[0] + ";" + str(c) + " " + str(u) + " " + str(t) + " 0 0 0\n" 
+                                          keyToID_lx(cont[0], keyMap) + " " + cont[0] + ";" + str(make_core(c)) + " " + str(make_uncore(u)) + " " + str(t) + " 0 0 0\n" 
                                           ]
     # extract to list
     freqComm = []

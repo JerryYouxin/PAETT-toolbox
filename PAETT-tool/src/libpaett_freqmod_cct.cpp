@@ -273,8 +273,10 @@ void FUNCNAME(PAETT_inst_init)() {
     char* defaultCore = getenv("PAETT_DEFAULT_CORE_FREQ");
     char* defaultUncore = getenv("PAETT_DEFAULT_UNCORE_FREQ");
     if(envPath==NULL) {
+        printf("Trying to read frequency command from: %s\n",LIBPAETT_CCT_FREQFILE);
         root = readCCTFreqCommand(LIBPAETT_CCT_FREQFILE);
     } else {
+        printf("Trying to read frequency command from: %s\n",envPath);
         root = readCCTFreqCommand(envPath);
     }
 #ifdef ENABLE_FINEGRANED_TUNING
@@ -321,8 +323,8 @@ void FUNCNAME(PAETT_inst_init)() {
     uncore_default = MAKE_UNCORE_VALUE_BY_FREQ(uncore_default);
     printf("-- [Info]: Default core=%d, uncore=%d\n", core_default, uncore_default);
     if(root) {
-        printf("Configured Frequency Command CCT:\n");
-        CCTFreqCommand::print(root);
+        // printf("Configured Frequency Command CCT:\n");
+        // CCTFreqCommand::print(root);
         root->reset();
         __tuneTo(root);
     } else {

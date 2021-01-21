@@ -40,6 +40,8 @@ def thread_exec(exe, keymap_fn, tnum, papi, cct, out_dir, enable_continue):
                 cct.mergeFrom(cct_tmp, rule=mergeMetrics)
     else:
         res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), tnum, 0)
+        if (not os.path.exists(res_fn)) and os.path.exists('.'.join(res_fn.split('.')[:-1])):
+            res_fn = '.'.join(res_fn.split('.')[:-1])
         if not (enable_continue or os.path.exists(res_fn)):
             res_fn = execute(exe, tnum, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir, res_fn=res_fn, papi_events=[], collect_energy=True)
         file = open(res_fn, 'r')
@@ -88,6 +90,7 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
                 print("Update Best as ", i)
         else:
             cct.mergeFrom(cct_tmp, rule=reserveMinimalEnergy)
+            print("Energy {0} Joules".format(get_cct_energy(cct)))
     # now cct has already consists of optimal thread number and corresponding PAPI counter values
     # reset cct iterators
     cct.reset()
