@@ -28,16 +28,7 @@ from mlxtend.regressor import StackingRegressor as stack
 from mlxtend.data import boston_housing_data
 from sklearn.svm import SVR
 
-
-
 from sklearn.ensemble import BaggingRegressor
-'''
-from sklearn.ensemble import ExtraTreesRegressor
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.ensemble import HistGradientBoostingRegressor
-#import tflearn
-#import tflearn.datasets.mnist as mnist
-'''
 
 def read_data(benchmarks):
     res = {}
@@ -347,7 +338,7 @@ def MLP_model_init(num=55, hidden=(16,16,16)):
 def GDBT_model_init():
     return Pipeline([('std',StandardScaler()),('model',GradientBoostingRegressor(loss='huber', learning_rate=0.1, n_estimators=80, subsample=0.8, max_depth=3, min_samples_split=130, min_samples_leaf=30, max_features=7, random_state=89))])
 
-def MAPE(model, E_region):
+def MAPE(f, model, E_region):
     mape = 0
     for key in E_region.keys():
         f.write("region name:{0}________________________________________________\n".format(key))
@@ -417,32 +408,34 @@ def load(path):
         model = pickle.load(f)
     return model
 
-def LOOCV_test(data):
-    #print(data)
-    datasets = LOOCV_split_dataset(data)
-    #print(datasets)
-    #print("111111111111111111")
-    # model = load("fine_tuneMLP.pkl")
-    for b in datasets.keys():
-        #model = GDBT_model_init()
-        model = MLP_model_init()
-        #model = Stack_model_init()
-        # model = mlxstack()
-        # extract dataset
-        I_train = datasets[b][0][0]
-        O_train = datasets[b][0][1]
-        I_test  = datasets[b][1][0]
-        O_test  = datasets[b][1][1]
-        # training
-        #print(O_train)
-        model.fit(I_train,O_train)
-        # prediction
-        O_train_pred = model.predict(I_train)
-        O_test_pred  = model.predict(I_test)
-        train_loss = mean_absolute_error(O_train, O_train_pred)
-        test_loss  = mean_absolute_error(O_test, O_test_pred)
-        mape = MAPE(model, data[b][2])
-        print("\n {0}: Train Loss={1}, Test Loss={2}, MAPE={3}".format(b, train_loss, test_loss, mape))
+def LOOCV_test(data, out_filename):
+    print("Begin LOOCV test")
+    with open(out_filename, "w") as f:
+        #print(data)
+        datasets = LOOCV_split_dataset(data)
+        #print(datasets)
+        #print("111111111111111111")
+        # model = load("fine_tuneMLP.pkl")
+        for b in datasets.keys():
+            #model = GDBT_model_init()
+            model = MLP_model_init()
+            #model = Stack_model_init()
+            # model = mlxstack()
+            # extract dataset
+            I_train = datasets[b][0][0]
+            O_train = datasets[b][0][1]
+            I_test  = datasets[b][1][0]
+            O_test  = datasets[b][1][1]
+            # training
+            #print(O_train)
+            model.fit(I_train,O_train)
+            # prediction
+            O_train_pred = model.predict(I_train)
+            O_test_pred  = model.predict(I_test)
+            train_loss = mean_absolute_error(O_train, O_train_pred)
+            test_loss  = mean_absolute_error(O_test, O_test_pred)
+            mape = MAPE(f, model, data[b][2])
+            print("\n {0}: Train Loss={1}, Test Loss={2}, MAPE={3}".format(b, train_loss, test_loss, mape))
 
 
 def train(data):
@@ -497,8 +490,7 @@ def save(model, name="MLP"):
     pickle.dump(model, open(name+'.pkl',"wb"))
 
 
-if __name__=="__main__":
-
+def main():
     c_min = config.get_min_core()
     c_max = config.get_max_core()
     uc_min = config.get_min_uncore()
@@ -507,7 +499,6 @@ if __name__=="__main__":
     print("Reading Data...")
 
     dataset =  sys.argv[1]
-    print dataset
 
     #NPB_data = read_data(["BT", "CG", "EP", "FT", "MG", "SP", "IS"])
     #NPB_data = read_data(["BT", "CG", "EP", "FT", "LU", "MG", "SP", "UA", "IS","cfd","hotspot","nw","particlefilter","pathfinder","streamcluster"])
@@ -527,20 +518,16 @@ if __name__=="__main__":
     print("Filter dirty data...")
     # define the values of core frequency and uncore frequency,and the threshold of energy value
     # filter_data( data , ( cf_max-cf_min+1 )*( ucf_max-ucf_min+1 ) , energy_threshold )
-    train_data = filter_data(train_data, (c_max-c_min+1)*(ucf_max-ucf_min+1), 5)
+    train_data = filter_data(train_data, (c_max-c_min+1)*(uc_max-uc_min+1), 5)
 
-    print("find stgdata")
+    print("Auto correction of outliers...")
     # find the strange energy value and correct it by average the neighbor pot
     # one can set "max" in function filter_energy to scale the range
     # __set the values of core frequency and uncore frequency in function c_min\c_max\uc_min\uc_max
     train_data = filter_energy(train_data,c_min,c_max,uc_min,uc_max)
 
-    # record the LOOCV_test result
-    f = open("predresult", "w")
-    print("Begin LOOCV test")
     # define the training model by switchint or seting "model" value in function LOOCV_test
-    LOOCV_test(train_data)
-    f.close()
+    LOOCV_test("predresult", train_data)
     # train the global model 
     print("Begin training whole dataset")
     model = train(train_data)
