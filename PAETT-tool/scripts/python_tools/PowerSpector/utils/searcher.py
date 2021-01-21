@@ -52,8 +52,7 @@ def thread_exec(exe, keymap_fn, tnum, papi, cct, out_dir, enable_continue):
     return cct
 
 # [start, end], with step size *step*
-def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_thread, enable_continue, enable_cct=True, cct_file="thread.cct", generate_commands=False, checkpoint_dir='./'):
-    assert(enable_cct==True)
+def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_thread, enable_continue, enable_cct=False, cct_file="thread.cct", generate_commands=False, checkpoint_dir='./'):
     out_dir = checkpoint_dir+'/thread_metrics/'
     print("Using checkpoint directory: ", out_dir)
     if enable_continue:
@@ -105,7 +104,7 @@ def threadSearch(exe, keymap_fn, papi, start, end, step, enable_consistant_threa
             print("Save thread optimized cct to ", cct_file)
             with open(cct_file, 'w') as f:
                 cct.save(f)
-    if enable_consistant_thread:
+    if not enable_cct:
         return best_thread
     return cct
 

@@ -71,7 +71,7 @@ def main():
     parser.add_argument('--step', help='step of number of threads when searching', type=int, default=2)
     parser.add_argument('--out', help='output file', default='predict.cct')
     parser.add_argument('--model', help='path to dumped pickle sklearn model', default='')
-    parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='')
+    parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='PAPI_BR_NTK,PAPI_LD_INS,PAPI_L2_ICR,PAPI_BR_MSP,PAPI_RES_STL,PAPI_SR_INS,PAPI_L2_DCR')
     args = parser.parse_args()
     # initialization
     model = load_model(args.model)
@@ -81,7 +81,7 @@ def main():
     papi_counters = args.papi.split(',')
     print(papi_counters)
     # begin thread searching
-    cct = threadSearch(args.exe, args.keymap, papi_counters, args.ts, args.te, args.step, args.consistant, args.cont)
+    cct = threadSearch(args.exe, args.keymap, papi_counters, args.ts, args.te, args.step, args.consistant, args.cont, enable_cct=True)
     cct.processAllKeyWith(keyToID, load_keyMap(args.keymap))
     predict(cct, args.out, config, model, len(papi_counters))
 
