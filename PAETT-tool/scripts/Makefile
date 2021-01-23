@@ -12,4 +12,4 @@ all:
 	chmod +x freq_search
 	chmod +x freq_predict
 	chmod +x collect_data
-	chmod +x pred
+	chmod +x pretrain

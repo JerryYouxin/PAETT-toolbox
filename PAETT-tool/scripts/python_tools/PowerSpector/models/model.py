@@ -1,35 +1,10 @@
 from abc import abstractmethod
 import numpy as np
-import math
 import pickle
-import os
-import sys
 
-sys.path.append("..")
-from utils.Configuration import config
-from utils.executor import execute, get_metric_name
-from utils.CallingContextTree import CallingContextTree, AdditionalData, load_keyMap
-from utils.searcher import threadSearch, mergeMetrics, addThreadInfo
-
-from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_absolute_error
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.neural_network import MLPRegressor
-from sklearn.ensemble import GradientBoostingRegressor
 
-#from sklearn.grid_search import GridSearchCV
-from sklearn.model_selection import GridSearchCV
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import StackingRegressor
-from sklearn.linear_model import LassoCV
-from sklearn.linear_model import LinearRegression
-
-from mlxtend.regressor import StackingRegressor as stack
-from mlxtend.data import boston_housing_data
-from sklearn.svm import SVR
-
-from sklearn.ensemble import BaggingRegressor
+import datetime
 
 def MAPE(f, model, E_region):
     mape = 0
@@ -99,13 +74,19 @@ class ModelBase:
             self.model = pickle.load(f)
         return self.model
 
-    def LOOCV_test(self, data, out_filename):
+    def save(self, name=None):
+        if name is None:
+            name = self.__class__.__name__ + '-' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + '.pkl'
+        print("Save model into: {0}".format(name))
+        pickle.dump(self.model, open(name,"wb"))
+
+    def LOOCV_test(self, dataset, out_filename):
         if self.model is None:
             raise ValueError(self.model)
         print("Begin LOOCV test")
         with open(out_filename, "w") as f:
             #print(data)
-            datasets = data.LOOCV_split_dataset()
+            datasets = dataset.LOOCV_split_dataset()
             #print(datasets)
             #print("111111111111111111")
             # model = load("fine_tuneMLP.pkl")
@@ -127,10 +108,11 @@ class ModelBase:
                 O_test_pred  = model.predict(I_test)
                 train_loss = mean_absolute_error(O_train, O_train_pred)
                 test_loss  = mean_absolute_error(O_test, O_test_pred)
-                mape = MAPE(f, model, data[b][2])
+                mape = MAPE(f, model, dataset.data[b][2])
                 print("\n {0}: Train Loss={1}, Test Loss={2}, MAPE={3}".format(b, train_loss, test_loss, mape))
 
-    def train(self, data):
+    def train(self, dataset):
+        data = dataset.data
         I_train = []
         O_train = []
         for b in data.keys():
