@@ -1,5 +1,4 @@
 import numpy as np
-from ..utils.Configuration import config
 
 class Filter:
     @staticmethod
@@ -200,14 +199,28 @@ class Filter:
 
 
 class DataSet:
-    def __init__(self, benchmarks=[], energy_threshold=5, enable_correction=True):
+    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True):
         self.data = {}
+        self.cmin = cmin
+        self.cmax = cmax
+        self.ucmin= ucmin
+        self.ucmax= ucmax
         if len(benchmarks)>0:
+            print("Loading data from benchmarks...")
             self.load(benchmarks)
-            self.filter(energy_threshold, enable_correction)
+            self.filter(cmin, cmax, ucmin, ucmax, energy_threshold, enable_correction)
 
     def load(self, benchmarks):
+        n = len(benchmarks)
+        i = 0
+        maxlen = 0
         for b in benchmarks:
+            if len(b) > maxlen:
+                maxlen = len(b)
+        spacer = "Loading {{0:.2f}}%: {{1:{}}}".format(maxlen)
+        for b in benchmarks:
+            print(spacer.format(100*float(i)/float(n), b), end='\r')
+            i = i+1
             I_train = []
             O_train = []
             E_region= {}
@@ -248,15 +261,14 @@ class DataSet:
                         continue
             self.data[b] = (I_train, O_train, E_region)
             #print(res[b])
+        print("\nLoad Finish!")
         return self.data
 
-    def filter(self, energy_threshold=5, enable_correction=True):
-        c_min = config.get_min_core()
-        c_max = config.get_max_core()
-        uc_min = config.get_min_uncore()
-        uc_max = config.get_max_uncore()
+    def filter(self, c_min, c_max, uc_min, uc_max, energy_threshold=5, enable_correction=True):
+        print("Filtering data...")
         self.data = Filter.filter_data(self.data, (c_max-c_min+1)*(uc_max-uc_min+1), energy_threshold)
         if enable_correction:
+            print("Filtering data with correction...")
             self.data = Filter.filter_energy(self.data,c_min,c_max,uc_min,uc_max)
 
     def LOOCV_split_dataset(self):
@@ -264,6 +276,9 @@ class DataSet:
         res = {}
         for b in data.keys():
             #print(b)
+            if len(data[b][0])==0 or len(data[b][1])==0:
+                print("\n Warning: {0}: has no test data! Skip LOOCV for this dataset.".format(b))
+                continue
             test_data = (np.array(data[b][0]), np.array(data[b][1]))
             I_train = []
             O_train = []
@@ -273,6 +288,9 @@ class DataSet:
                     I_train += data[t][0]
                     O_train += data[t][1]
                     #print("________________________")
+            if len(I_train)==0 or len(O_train)==0:
+                print("\n Warning: {0}: has no training data! Skip LOOCV for this dataset.".format(b))
+                continue
             train_data = (np.array(I_train), np.array(O_train))
             res[b] = (train_data, test_data)
         return res

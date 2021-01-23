@@ -19,12 +19,10 @@ def MAPE(f, model, E_region):
         '''
         f.write("\n")
 
-
         f.write("energy:          \n")
         for i in range(7,21):
             f.write("          ")
             f.write("{:<3d}".format(i) )
-
         f.write("\n")
 
         for i in range(0,15):
@@ -39,7 +37,6 @@ def MAPE(f, model, E_region):
         for i in range(0,14):
             f.write("          ")
             f.write("{:<3d}".format(i+8) )
-
         f.write("\n")
 
         for i in range(0,15):
@@ -83,7 +80,7 @@ class ModelBase:
     def LOOCV_test(self, dataset, out_filename):
         if self.model is None:
             raise ValueError(self.model)
-        print("Begin LOOCV test")
+        mape_list = []
         with open(out_filename, "w") as f:
             #print(data)
             datasets = dataset.LOOCV_split_dataset()
@@ -92,6 +89,7 @@ class ModelBase:
             # model = load("fine_tuneMLP.pkl")
             for b in datasets.keys():
                 #model = GDBT_model_init()
+                self.init()
                 model = self.model
                 #model = Stack_model_init()
                 # model = mlxstack()
@@ -109,7 +107,9 @@ class ModelBase:
                 train_loss = mean_absolute_error(O_train, O_train_pred)
                 test_loss  = mean_absolute_error(O_test, O_test_pred)
                 mape = MAPE(f, model, dataset.data[b][2])
-                print("\n {0}: Train Loss={1}, Test Loss={2}, MAPE={3}".format(b, train_loss, test_loss, mape))
+                print(" {0}: Train Loss={1}, Test Loss={2}, MAPE={3}\n".format(b, train_loss, test_loss, mape))
+                mape_list.append(mape)
+        print("INFO: LOOCV average MAPE={0}".format(np.mean(mape_list)))
 
     def train(self, dataset):
         data = dataset.data
@@ -120,11 +120,11 @@ class ModelBase:
             O_train += data[b][1]
         I_train = np.array(I_train)
         O_train = np.array(O_train)
-        model = self.init()
-        model.fit(I_train, O_train)
+        self.init()
+        self.model.fit(I_train, O_train)
 
-        O_train_pred = model.predict(I_train)
+        O_train_pred = self.model.predict(I_train)
         train_loss = mean_absolute_error(O_train, O_train_pred)
         print("\n Training Loss: ", train_loss)
-        return model
+        return self.model
     

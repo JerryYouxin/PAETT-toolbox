@@ -8,12 +8,13 @@ from sklearn.neural_network import MLPRegressor
 
 class MLPModel(ModelBase):
     def __init__(self):
-        super.__init__()
+        # super.__init__()
         self.init()
 
     def init(self, num=55, hidden=(16,16,16)):
         #model = MLPRegressor(hidden_layer_sizes=(5,5),activation='relu', solver='lbfgs', warm_start=True, max_iter=5000, early_stopping=True, random_state=10)max_iter=7000,
         #model = MLPRegressor(hidden_layer_sizes=(16,16),activation='relu', alpha=0.1,batch_size=128,beta_1=0.6,beta_2=0.2, solver='adam',learning_rate_init=1e-3, warm_start=True, max_iter=7000)
+        print("INFO: Initializing MLP model")
         model = MLPRegressor(hidden_layer_sizes=(12,12),activation='relu',alpha=0.1,batch_size=128, solver='adam',learning_rate_init=1e-3, warm_start=True, max_iter=7000, early_stopping=True,random_state=70)
         # fake fit to obtain weights
         model.fit([[0 for i in range(num)] for k in range(1000)],[0 for i in range(1000)])
