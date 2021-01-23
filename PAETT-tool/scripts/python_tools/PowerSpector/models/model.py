@@ -109,7 +109,7 @@ class ModelBase:
                 mape = MAPE(f, model, dataset.data[b][2])
                 print(" {0}: Train Loss={1}, Test Loss={2}, MAPE={3}\n".format(b, train_loss, test_loss, mape))
                 mape_list.append(mape)
-        print("INFO: LOOCV average MAPE={0}".format(np.mean(mape_list)))
+        print("INFO: LOOCV average MAPE={0:.2f}".format(np.mean(mape_list)))
 
     def train(self, dataset):
         data = dataset.data
