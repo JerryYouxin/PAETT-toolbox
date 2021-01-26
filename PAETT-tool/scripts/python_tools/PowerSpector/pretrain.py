@@ -1,5 +1,5 @@
 from preprocess.dataset import DataSet
-from models import MLPModel, GDBTModel
+from models import MLPModel, GDBTModel, StdMLPModel
 from utils.Configuration import config
 
 import os
@@ -8,7 +8,8 @@ import argparse
 
 models = {
     'MLP': MLPModel,
-    'GDBT': GDBTModel
+    'GDBT': GDBTModel,
+    'StdMLP': StdMLPModel
 }
 
 if __name__ == '__main__':
@@ -18,14 +19,21 @@ if __name__ == '__main__':
     parser.add_argument('--data', help="data folder containing all collected data from all benchmarks.", default="COLLECT")
     parser.add_argument('--out', help="output model's file name", default=None)
     parser.add_argument('--configs', help="manual configuration in format (in 100MHz): <min core freq>,<max core freq>,<min uncore freq>,<max uncore freq> ", default="")
-    parser.add_argument('--threshold', help="Energy threshold for filtering dirty data.", type=float, default=10.0)
+    parser.add_argument('--threshold', help="Energy threshold for filtering dirty data.", type=float, default=5.0)
     parser.add_argument('--enable_cct', help="Enable loading training data with CCT-awareness", action="store_true")
     parser.add_argument('--disable_cct', help="Disable loading training data with CCT-awareness", action="store_true")
+    parser.add_argument('--enable_correction', help="Enable automatic correction of data. May be useful when some of the data are dirty", action="store_true")
+    parser.add_argument('--with-data-enhancement', help="Enable data enhancement with CCT-awareness.", action="store_true")
     args = parser.parse_args()
 
     enable_cct = True
     if args.disable_cct:
         enable_cct = False
+    
+    if args.with_data_enhancement:
+        if not enable_cct:
+            print("Error: --with-data-enhancement and --disable_cct must not be set simultaneously!")
+            exit(1)
 
     if args.model not in models.keys():
         print("Error: unknown model: ", args.model)
@@ -75,7 +83,7 @@ if __name__ == '__main__':
         else:
             print('Error: format error for --configs!')
             exit(1)
-    dataset = DataSet(cmin, cmax, ucmin, ucmax, benchmarks=benchmarks, energy_threshold=args.threshold, enable_correction=True)
+    dataset = DataSet(cmin, cmax, ucmin, ucmax, benchmarks=benchmarks, energy_threshold=args.threshold, enable_correction=args.enable_correction, enable_cct=enable_cct, with_data_enhancement=args.with_data_enhancement)
     # LOOCV test
     print("Begin LOOCV test")
     model.LOOCV_test(dataset, "predresult")

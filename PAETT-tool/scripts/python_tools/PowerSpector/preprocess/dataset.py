@@ -1,17 +1,39 @@
 import numpy as np
 import pickle
 import os
+import multiprocessing as mp
+import time
 
 class Filter:
     @staticmethod
-    def filter_data(data, test_num, energy_threshold):
+    def filter_data(data, test_num, energy_threshold, filter_same=False):
+        checker = {}
         res = {}
         for b in data.keys():
             I_train = []
             O_train = []
             E_region_new = {}
             E_region= data[b][2]
+            if not filter_same:
+                # quick check first
+                early_ret = True
+                for key in E_region.keys():
+                    if len(E_region[key][2]) != test_num:
+                        early_ret = False
+                        break
+                    if min(E_region[key][2]) <= energy_threshold:
+                        early_ret = False
+                        break
+                if early_ret:
+                    res[b] = data[b]
+                    print("{0}: No regions removed. Remain {1} regions.".format(b, len(E_region.keys())))
+                    continue
             for key in E_region.keys():
+                if filter_same:
+                    check = str(E_region[key][3])
+                    if check in checker.keys():
+                        continue
+                    checker[check] = 1 # mark the checker to filter out same data
                 if len(E_region[key][2]) != test_num:
                     continue
                 if min(E_region[key][2]) < energy_threshold:
@@ -201,38 +223,40 @@ class Filter:
 
 
 class DataSet:
-    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True, enable_cct=True):
+    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True, enable_cct=True, with_data_enhancement=False):
         self.data = {}
         self.cmin = cmin
         self.cmax = cmax
         self.ucmin= ucmin
         self.ucmax= ucmax
-        self.cachePath = ".dataset.REG.cache"
-        self.cachePathCCT = ".dataset.CCT.cache"
+        p1 = "CCT" if enable_cct else "REG"
+        p2 = "ENH" if with_data_enhancement else "NOE"
+        self.cachePath = ".dataset.{0}.{1}.cache".format(p1, p2)        
         if len(benchmarks)>0:
             print("Loading data from benchmarks...")
-            self.load(benchmarks, enable_cct)
+            self.load(benchmarks, enable_cct, with_data_enhancement=with_data_enhancement)
             self.filter(cmin, cmax, ucmin, ucmax, energy_threshold, enable_correction)
 
-    def loadCache(self, root, enable_cct):
-        path = root+"/"
-        if enable_cct:
-            path += self.cachePathCCT
-        else:
-            path += self.cachePath
+    def loadCache(self, root):
+        path = root+"/"+self.cachePath
         if not os.path.exists(path):
             return None
         print("Cache Found for {0}: {1}".format(root, path))
         with open(path, "rb") as f:
             data = pickle.load(f)
         return data
+    @staticmethod
+    def loadCacheJob(q, root, cache):
+        path = root + '/' + cache
+        if not os.path.exists(path):
+            return None
+        print("Cache Found: {0}".format(path))
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        q.push( (root,data) )
 
-    def saveCache(self, data, root, enable_cct):
-        path = root+"/"
-        if enable_cct:
-            path += self.cachePathCCT
-        else:
-            path += self.cachePath
+    def saveCache(self, data, root):
+        path = root+"/"+self.cachePath
         print("Saving Cache to {0}".format(path))
         pickle.dump(data, open(path,"wb"))
 
@@ -250,6 +274,8 @@ class DataSet:
             for k, c in child.items():
                 if cct[0] is not None:
                     cct[0] = [ cct[0][i]-c[0][i] for i in range(len(cct[0])) ]
+                    for v in cct[0]:
+                        assert(v>=0)
                 child[k] = self._split_papi(c)
         return cct
     # TODO: this split should be done in filter_significant_region tool
@@ -326,9 +352,9 @@ class DataSet:
                     E_region[reg][2].append(dat[-1])
                     E_region[reg][3].append(dat[:-1])
             self.data[b] = (I_train, O_train, E_region)
-            self.saveCache(self.data[b], b, enable_cct=False)
+            self.saveCache(self.data[b], b)
 
-    def _load_cct(self, benchLoads, spacer, n, i):
+    def _load_cct(self, benchLoads, spacer, n, i, with_data_enhancement):
         def cct2dict(cct, data, pre=""):
             children = cct[1:]
             cct_num = 0
@@ -343,6 +369,8 @@ class DataSet:
                         data[key] = c[0]
                     cct2dict(c, data, kpre+k)
                 cct_num += 1
+        def merge_metrics(a, b):
+            return [a[0], a[1]] + [a[k]+b[k] for k in range(2, len(a))]
         for b in benchLoads:
             i = i+1
             I_train = []
@@ -353,6 +381,40 @@ class DataSet:
                 core, uncore = self._decode_FreqSet(freqSet)
                 data = {}
                 cct2dict(cct, data)
+                # data enhancement:
+                #   1. Add merged metrics along CCTs
+                #   2. Add merged metrics of different numbers of CCTs from the same region
+                if with_data_enhancement:
+                    regMetrics = {}
+                    dataItems = []
+                    for key, dat in data.items():
+                        # 1.1 collect ccts and metrics into a single list
+                        ccts = key.split(';')
+                        dataItems.append((ccts, dat))
+                        # 2.1 collect metrics of different CCTs from the same region
+                        reg = ccts[-1]
+                        if reg not in regMetrics.keys():
+                            regMetrics[reg] = [dat]
+                        else:
+                            regMetrics[reg]+= [dat]
+                    # 1.2 Add merged metrics along CCTs
+                    for ccts, dat in dataItems:
+                        for j in range(1,len(ccts)):
+                            k = ";".join(ccts[:j])
+                            if k not in data.keys():
+                                data[k] = dat
+                            else:
+                                data[k] = merge_metrics(data[k], dat)
+                    # 2.2 Add merged metrics of different numbers of CCTs from the same region
+                    for reg, metrics in regMetrics.items():
+                        if len(metrics) > 1:
+                            j = 0
+                            base = metrics[0]
+                            for dat in metrics[1:]:
+                                j = j + 1
+                                base = merge_metrics(base, dat)
+                                key = reg+","+str(j)
+                                data[key] = base
                 for key, dat in data.items():
                     if key not in E_region.keys():
                         E_region[key] = ([], [], [], [])
@@ -363,7 +425,7 @@ class DataSet:
                     E_region[key][2].append(dat[-1])
                     E_region[key][3].append(dat[:-1])
             self.data[b] = (I_train, O_train, E_region)
-            self.saveCache(self.data[b], b, enable_cct=True)
+            self.saveCache(self.data[b], b)
         # for b in benchLoads:
         #     i = i+1
         #     I_train = []
@@ -429,15 +491,17 @@ class DataSet:
         #     self.saveCache(self.data[b], b)
         #     #print(res[b])
 
-    def load(self, benchmarks, enable_cct=True, enable_cache=False):
+    def load(self, benchmarks, enable_cct=True, enable_cache=True, with_data_enhancement=False):
         n = len(benchmarks)
         i = 0
         maxlen = 0
         benchLoads = []
         data = None
+        dataList = []
+        start_time=time.time()
         for b in benchmarks:
             if enable_cache:
-                data = self.loadCache(b, enable_cct)
+                data = self.loadCache(b)
             if data is None:
                 benchLoads.append(b)
                 if len(b) > maxlen:
@@ -445,10 +509,12 @@ class DataSet:
             else:
                 i = i+1
                 self.data[b] = data
+        end_time=time.time()
+        print("Loading Cache time: {0:.4f} s".format(end_time-start_time))
         spacer = "Loading {{0}}/{{1}}: {{2:{}}}[{{3:5.1f}}%]".format(maxlen)
         if enable_cct:
             print("[INFO] Load data at CCT basis")
-            self._load_cct(benchLoads, spacer, n, i)
+            self._load_cct(benchLoads, spacer, n, i, with_data_enhancement)
         else:
             print("[INFO] Load data at Region basis")
             self._load_reg(benchLoads, spacer, n, i)
@@ -461,6 +527,8 @@ class DataSet:
         if enable_correction:
             print("Filtering data with correction...")
             self.data = Filter.filter_energy(self.data,c_min,c_max,uc_min,uc_max)
+        else:
+            print("[INFO] Auto correction disabled")
 
     def LOOCV_split_dataset(self):
         data = self.data
