@@ -48,7 +48,7 @@ def MAPE(f, model, E_region):
         # print("\n")
         E_pred = energy[pred.argmin()]
         E_min  = min(energy)
-        print(key, inp[pred.argmin()][0], inp[pred.argmin()][1], E_pred, inp[np.argmin(energy)][0], inp[np.argmin(energy)][1], E_min)
+        # print(key, inp[pred.argmin()][0], inp[pred.argmin()][1], E_pred, inp[np.argmin(energy)][0], inp[np.argmin(energy)][1], E_min)
         f.write("\npred:{0}-{1}  {2} \nreal:{3}-{4}   {5}\n\n".format(inp[pred.argmin()][0], inp[pred.argmin()][1], E_pred, inp[np.argmin(energy)][0], inp[np.argmin(energy)][1], E_min))
         mape += abs(E_pred-E_min)/E_min
     # mean
@@ -65,6 +65,9 @@ class ModelBase:
     def init(self):
         pass
 
+    def clear(self):
+        self.model = None
+
     def load(self, path):
         self.model = None
         with open(path, "rb") as f:
@@ -78,8 +81,6 @@ class ModelBase:
         pickle.dump(self.model, open(name,"wb"))
 
     def LOOCV_test(self, dataset, out_filename):
-        if self.model is None:
-            raise ValueError(self.model)
         mape_list = []
         with open(out_filename, "w") as f:
             #print(data)
@@ -89,8 +90,8 @@ class ModelBase:
             # model = load("fine_tuneMLP.pkl")
             for b in datasets.keys():
                 #model = GDBT_model_init()
-                self.init()
-                model = self.model
+                model = self.init()
+                assert(model is not None)
                 #model = Stack_model_init()
                 # model = mlxstack()
                 # extract dataset
@@ -100,12 +101,16 @@ class ModelBase:
                 O_test  = datasets[b][1][1]
                 # training
                 #print(O_train)
+                print("INFO: Training LOOCV for {0}...".format(b), end='', flush=True)
                 model.fit(I_train,O_train)
                 # prediction
+                print("Predict...", flush=True, end='')
                 O_train_pred = model.predict(I_train)
                 O_test_pred  = model.predict(I_test)
+                print("Calculate Loss...", flush=True, end='')
                 train_loss = mean_absolute_error(O_train, O_train_pred)
                 test_loss  = mean_absolute_error(O_test, O_test_pred)
+                print("Calculate MAPE...", flush=True)
                 mape = MAPE(f, model, dataset.data[b][2])
                 print(" {0}: Train Loss={1}, Test Loss={2}, MAPE={3}\n".format(b, train_loss, test_loss, mape))
                 mape_list.append(mape)
@@ -120,7 +125,7 @@ class ModelBase:
             O_train += data[b][1]
         I_train = np.array(I_train)
         O_train = np.array(O_train)
-        self.init()
+        self.model = self.init()
         self.model.fit(I_train, O_train)
 
         O_train_pred = self.model.predict(I_train)

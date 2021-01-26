@@ -1,4 +1,6 @@
 import numpy as np
+import pickle
+import os
 
 class Filter:
     @staticmethod
@@ -199,68 +201,257 @@ class Filter:
 
 
 class DataSet:
-    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True):
+    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True, enable_cct=True):
         self.data = {}
         self.cmin = cmin
         self.cmax = cmax
         self.ucmin= ucmin
         self.ucmax= ucmax
+        self.cachePath = ".dataset.REG.cache"
+        self.cachePathCCT = ".dataset.CCT.cache"
         if len(benchmarks)>0:
             print("Loading data from benchmarks...")
-            self.load(benchmarks)
+            self.load(benchmarks, enable_cct)
             self.filter(cmin, cmax, ucmin, ucmax, energy_threshold, enable_correction)
 
-    def load(self, benchmarks):
-        n = len(benchmarks)
-        i = 0
-        maxlen = 0
-        for b in benchmarks:
-            if len(b) > maxlen:
-                maxlen = len(b)
-        spacer = "Loading {{0:.2f}}%: {{1:{}}}".format(maxlen)
-        for b in benchmarks:
-            print(spacer.format(100*float(i)/float(n), b), end='\r')
+    def loadCache(self, root, enable_cct):
+        path = root+"/"
+        if enable_cct:
+            path += self.cachePathCCT
+        else:
+            path += self.cachePath
+        if not os.path.exists(path):
+            return None
+        print("Cache Found for {0}: {1}".format(root, path))
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        return data
+
+    def saveCache(self, data, root, enable_cct):
+        path = root+"/"
+        if enable_cct:
+            path += self.cachePathCCT
+        else:
+            path += self.cachePath
+        print("Saving Cache to {0}".format(path))
+        pickle.dump(data, open(path,"wb"))
+
+    def _get_FreqSet(self, core, uncore):
+        return str(core)+","+str(uncore)
+
+    def _decode_FreqSet(self, freqSet):
+        freq = freqSet.split(',')
+        return int(freq[0]), int(freq[1])
+
+    # Hot fix to split papi counter value along CCT (split_papi=True)
+    def _split_papi(self, cct):
+        children = cct[2:]
+        for child in children:
+            for k, c in child.items():
+                if cct[0] is not None:
+                    cct[0] = [ cct[0][i]-c[0][i] for i in range(len(cct[0])) ]
+                child[k] = self._split_papi(c)
+        return cct
+    # TODO: this split should be done in filter_significant_region tool
+    def _load(self, bench, i, n, spacer, split_papi=True):
+            CCT = {}
+            with open(bench+"/metric.out","r") as f:
+                core=0
+                uncore=0
+                lines = f.readlines()
+                N = len(lines)
+                I = 1
+                preP = -1
+                for line in lines:
+                    if int(1000*float(I)/float(N))!=preP:
+                        print(spacer.format(i, n, bench, 100*float(I)/float(N)), end='\r')
+                        preP = int(10000*float(I)/float(N))
+                    I = I + 1
+                    cont = line.split(';')
+                    if len(cont)<=0:
+                        continue
+                    if len(cont) >0:
+                        keys = cont[:-1]
+                        record = cont[-1].replace("\n","").split(' ')
+                        core = int(record[0])
+                        uncore = int(record[1])
+                        assert(core!=0 and uncore!=0)
+                        record = list(map(lambda x:float(x),record))
+
+                        FreqSet = self._get_FreqSet(core, uncore)
+                        if FreqSet not in CCT.keys():
+                            CCT[FreqSet] = [None]
+                        cct = CCT[FreqSet]
+                        reg = keys[-1]
+                        for k in keys[:-1]:
+                            cct = cct[-1][k]
+                        assert(len(cct)>=1)
+                        if len(cct)==1 or (reg in cct[-1].keys()):
+                            cct.append({reg: [record]})
+                        else:
+                            cct[-1][reg] = [record]
+            if split_papi:
+                for freqSet, cct in CCT.items():
+                    CCT[freqSet] = self._split_papi(cct)
+            return CCT
+
+    def _load_reg(self, benchLoads, spacer, n, i):
+        def mergeByReg(cct, data):
+            children = cct[1:]
+            for child in children:
+                for k, c in child.items():
+                    if c[0] is not None:
+                        if k not in data.keys():
+                            data[k] = c[0]
+                        else:
+                            data[k] = [ data[k][0], data[k][1] ] + [ data[k][i]+c[0][i] for i in range(2,len(data[k])) ]
+                    mergeByReg(c, data)
+        for b in benchLoads:
             i = i+1
             I_train = []
             O_train = []
             E_region= {}
-            with open(b+"/metric.out","r") as f:
-                core=0
-                uncore=0
-                for line in f:
-                    contori = line.split(';')
-                    #print(contori)
-                    if len(contori)==0:
-                        continue
-                    if len(contori) >0:
-                        contori_back = contori
-                        cont = ( contori[-1].replace("\n","") ).split(' ')
-                        core=int(cont[0])
-                        uncore=int(cont[1])
-                        assert(core!=0 and uncore!=0)
-                        record = []
-                        #print(contori_back)
-                        del(contori_back[-1])
-                        #print(contori_back)
-                        key = ''.join(contori_back)
-                        #for i in range(len(contori)):
-                        #    key += contori[i]
-
-                        if key not in E_region.keys():
-                            E_region[key]=([],[],[],[])
-                            #print(key)
-                        for s in cont:
-                            record.append(float(s))
-                        I_train.append(record[:-1])
-                        O_train.append(record[-1])
-                        E_region[key][0].append(core)
-                        E_region[key][1].append(uncore)
-                        E_region[key][2].append(record[-1])
-                        E_region[key][3].append(record[:-1])
-                    else:
-                        continue
+            CCT = self._load(b, i, n, spacer)
+            for freqSet, cct in CCT.items():
+                core, uncore = self._decode_FreqSet(freqSet)
+                data = {}
+                mergeByReg(cct, data)
+                for reg, dat in data.items():
+                    if reg not in E_region.keys():
+                        E_region[reg] = ([], [], [], [])
+                    I_train.append(dat[:-1])
+                    O_train.append(dat[-1])
+                    E_region[reg][0].append(core)
+                    E_region[reg][1].append(uncore)
+                    E_region[reg][2].append(dat[-1])
+                    E_region[reg][3].append(dat[:-1])
             self.data[b] = (I_train, O_train, E_region)
-            #print(res[b])
+            self.saveCache(self.data[b], b, enable_cct=False)
+
+    def _load_cct(self, benchLoads, spacer, n, i):
+        def cct2dict(cct, data, pre=""):
+            children = cct[1:]
+            cct_num = 0
+            for child in children:
+                if pre=="":
+                    kpre = pre
+                else:
+                    kpre = pre+"-"+str(cct_num)+";"
+                for k, c in child.items():
+                    if c[0] is not None:
+                        key = kpre+k
+                        data[key] = c[0]
+                    cct2dict(c, data, kpre+k)
+                cct_num += 1
+        for b in benchLoads:
+            i = i+1
+            I_train = []
+            O_train = []
+            E_region= {}
+            CCT = self._load(b, i, n, spacer)
+            for freqSet, cct in CCT.items():
+                core, uncore = self._decode_FreqSet(freqSet)
+                data = {}
+                cct2dict(cct, data)
+                for key, dat in data.items():
+                    if key not in E_region.keys():
+                        E_region[key] = ([], [], [], [])
+                    I_train.append(dat[:-1])
+                    O_train.append(dat[-1])
+                    E_region[key][0].append(core)
+                    E_region[key][1].append(uncore)
+                    E_region[key][2].append(dat[-1])
+                    E_region[key][3].append(dat[:-1])
+            self.data[b] = (I_train, O_train, E_region)
+            self.saveCache(self.data[b], b, enable_cct=True)
+        # for b in benchLoads:
+        #     i = i+1
+        #     I_train = []
+        #     O_train = []
+        #     E_region= {}
+        #     with open(b+"/metric.out","r") as f:
+        #         core=0
+        #         uncore=0
+        #         lines = f.readlines()
+        #         N = len(lines)
+        #         I = 0
+        #         preP = -1
+        #         cct_counter = {}
+        #         for line in lines:
+        #             if int(1000*float(I)/float(N))!=preP:
+        #                 print(spacer.format(i, n, b, 100*float(I)/float(N)), end='\r')
+        #                 preP = int(10000*float(I)/float(N))
+        #             I = I + 1
+        #             cont = line.split(';')
+        #             #print(contori)
+        #             if len(cont)==0:
+        #                 continue
+        #             if len(cont) >0:
+        #                 keys = cont[:-1]
+        #                 record = cont[-1].replace("\n","").split(' ')
+        #                 core = int(record[0])
+        #                 uncore = int(record[1])
+        #                 assert(core!=0 and uncore!=0)
+        #                 record = list(map(lambda x:float(x),record))
+        #                 key = ""
+        #                 if enable_cct:
+        #                     ikeys = 1
+        #                     Nkeys = len(keys)
+        #                     cct = "{0},{1},{2}".format(core, uncore, keys[0])
+        #                     if cct not in cct_counter.keys():
+        #                         cct_counter[cct] = 0
+        #                     elif ikeys==Nkeys:
+        #                         cct_counter[cct]+= 1
+        #                     cct+= "-"+str(cct_counter[cct])
+        #                     for k in keys[1:]:
+        #                         ikeys+= 1
+        #                         cct = cct + ';' + k
+        #                         if cct not in cct_counter.keys():
+        #                             cct_counter[cct] = 0
+        #                         elif ikeys==Nkeys:
+        #                             cct_counter[cct]+= 1
+        #                         cct+= "-"+str(cct_counter[cct])
+        #                     key = ','.join(cct.split(',')[2:])
+        #                 else:
+        #                     key = ";".join(keys)
+        #                 if key not in E_region.keys():
+        #                     E_region[key]=([],[],[],[])
+        #                     #print(key)
+        #                 I_train.append(record[:-1])
+        #                 O_train.append(record[-1])
+        #                 E_region[key][0].append(core)
+        #                 E_region[key][1].append(uncore)
+        #                 E_region[key][2].append(record[-1])
+        #                 E_region[key][3].append(record[:-1])
+        #             else:
+        #                 continue
+        #     self.data[b] = (I_train, O_train, E_region)
+        #     self.saveCache(self.data[b], b)
+        #     #print(res[b])
+
+    def load(self, benchmarks, enable_cct=True, enable_cache=False):
+        n = len(benchmarks)
+        i = 0
+        maxlen = 0
+        benchLoads = []
+        data = None
+        for b in benchmarks:
+            if enable_cache:
+                data = self.loadCache(b, enable_cct)
+            if data is None:
+                benchLoads.append(b)
+                if len(b) > maxlen:
+                    maxlen = len(b)
+            else:
+                i = i+1
+                self.data[b] = data
+        spacer = "Loading {{0}}/{{1}}: {{2:{}}}[{{3:5.1f}}%]".format(maxlen)
+        if enable_cct:
+            print("[INFO] Load data at CCT basis")
+            self._load_cct(benchLoads, spacer, n, i)
+        else:
+            print("[INFO] Load data at Region basis")
+            self._load_reg(benchLoads, spacer, n, i)
         print("\nLoad Finish!")
         return self.data
 

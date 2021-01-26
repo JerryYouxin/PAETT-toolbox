@@ -18,14 +18,20 @@ if __name__ == '__main__':
     parser.add_argument('--data', help="data folder containing all collected data from all benchmarks.", default="COLLECT")
     parser.add_argument('--out', help="output model's file name", default=None)
     parser.add_argument('--configs', help="manual configuration in format (in 100MHz): <min core freq>,<max core freq>,<min uncore freq>,<max uncore freq> ", default="")
+    parser.add_argument('--threshold', help="Energy threshold for filtering dirty data.", type=float, default=10.0)
+    parser.add_argument('--enable_cct', help="Enable loading training data with CCT-awareness", action="store_true")
+    parser.add_argument('--disable_cct', help="Disable loading training data with CCT-awareness", action="store_true")
     args = parser.parse_args()
+
+    enable_cct = True
+    if args.disable_cct:
+        enable_cct = False
 
     if args.model not in models.keys():
         print("Error: unknown model: ", args.model)
         print("Error: Should be one of these pre-defined models: ", models.keys())
         exit(1)
     model = models[args.model]()
-    model.init()
     
     benchmarks = []
     if args.benchmarks=="":
@@ -69,7 +75,7 @@ if __name__ == '__main__':
         else:
             print('Error: format error for --configs!')
             exit(1)
-    dataset = DataSet(cmin, cmax, ucmin, ucmax, benchmarks=benchmarks, energy_threshold=5, enable_correction=True)
+    dataset = DataSet(cmin, cmax, ucmin, ucmax, benchmarks=benchmarks, energy_threshold=args.threshold, enable_correction=True)
     # LOOCV test
     print("Begin LOOCV test")
     model.LOOCV_test(dataset, "predresult")
