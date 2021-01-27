@@ -24,6 +24,7 @@ def predict_frequency(data, args):
     model = args[0]
     config = args[1]
     papi_num = args[2]
+    enable_scale = args[3]
     # the number of metrics is not valid, so ignore this node
     if len(data.data) != 2+papi_num:
         print("Warning: Ignore data:", data, ", as the number of data does not matched user specification!")
@@ -34,7 +35,9 @@ def predict_frequency(data, args):
     for c in range(config.get_min_core(), config.get_max_core()+1):
         for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
             inp.append([c, uc]+metrics)
-    trans = StandardScaler().fit_transform(np.array(inp))
+    trans = np.array(inp)
+    if enable_scale:
+        trans = StandardScaler().fit_transform(trans)
     pred = model.predict(trans)
     j = np.argmin(pred)
     core   = make_core(inp[j][0])
@@ -42,8 +45,8 @@ def predict_frequency(data, args):
     return AdditionalData([core, uncore, thread])
 
 # predict frequency command from model
-def predict(cct, out_fn, config, model, papi_num):
-    cct.processAllDataWith(predict_frequency, [model, config, papi_num])
+def predict(cct, out_fn, config, model, papi_num, enable_scale):
+    cct.processAllDataWith(predict_frequency, [model, config, papi_num, enable_scale])
     with open(out_fn, 'w') as f:
         cct.save(f, delimiter=' ')
 
@@ -73,7 +76,11 @@ def main():
     parser.add_argument('--out', help='output file', default='predict.cct')
     parser.add_argument('--model', help='path to dumped pickle sklearn model', default='')
     parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='PAPI_BR_NTK,PAPI_LD_INS,PAPI_L2_ICR,PAPI_BR_MSP,PAPI_RES_STL,PAPI_SR_INS,PAPI_L2_DCR')
+    parser.add_argument('--disable-scale', help="Disable scaling the input metric with StdScaler.", action="store_true")
     args = parser.parse_args()
+    enable_scale = True
+    if args.disable_scale:
+        enable_scale = False
     # initialization
     model = load_model(args.model)
     if model is None:
@@ -84,7 +91,7 @@ def main():
     # begin thread searching
     cct = threadSearch(args.exe, args.keymap, papi_counters, args.ts, args.te, args.step, args.consistant, args.cont, enable_cct=True)
     cct.processAllKeyWith(keyToID, load_keyMap(args.keymap))
-    predict(cct, args.out, config, model, len(papi_counters))
+    predict(cct, args.out, config, model, len(papi_counters), enable_scale)
 
 if __name__=='__main__':
     main()

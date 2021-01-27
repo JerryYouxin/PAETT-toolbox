@@ -26,7 +26,12 @@ if __name__ == '__main__':
     parser.add_argument('--disable_cct', help="Disable loading training data with CCT-awareness", action="store_true")
     parser.add_argument('--enable_correction', help="Enable automatic correction of data. May be useful when some of the data are dirty", action="store_true")
     parser.add_argument('--with-data-enhancement', help="Enable data enhancement with CCT-awareness.", action="store_true")
+    parser.add_argument('--disable-scale', help="Disable scaling the input metric with StdScaler.", action="store_true")
     args = parser.parse_args()
+
+    enable_scale = True
+    if args.disable_scale:
+        enable_scale = False
 
     enable_cct = True
     if args.disable_cct:
@@ -85,7 +90,7 @@ if __name__ == '__main__':
         else:
             print('Error: format error for --configs!')
             exit(1)
-    dataset = DataSet(cmin, cmax, ucmin, ucmax, benchmarks=benchmarks, energy_threshold=args.threshold, enable_correction=args.enable_correction, enable_cct=enable_cct, with_data_enhancement=args.with_data_enhancement)
+    dataset = DataSet(cmin, cmax, ucmin, ucmax, benchmarks=benchmarks, energy_threshold=args.threshold, enable_correction=args.enable_correction, enable_cct=enable_cct, with_data_enhancement=args.with_data_enhancement, enable_scale=enable_scale)
     # LOOCV test
     print("Begin LOOCV test")
     model.LOOCV_test(dataset, "predresult")
