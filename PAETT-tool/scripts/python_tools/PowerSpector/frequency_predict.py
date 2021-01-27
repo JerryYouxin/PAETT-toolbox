@@ -34,7 +34,8 @@ def predict_frequency(data, args):
     for c in range(config.get_min_core(), config.get_max_core()+1):
         for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
             inp.append([c, uc]+metrics)
-    pred = model.predict(np.array(inp))
+    trans = StandardScaler().fit_transform(np.array(inp))
+    pred = model.predict(trans)
     j = np.argmin(pred)
     core   = make_core(inp[j][0])
     uncore = make_uncore(inp[j][1])

@@ -4,8 +4,7 @@ import numpy as np
 import pickle
 
 from sklearn.metrics import mean_absolute_error
-
-from joblib import parallel_backend
+from sklearn.preprocessing import StandardScaler
 
 import datetime
 
@@ -65,7 +64,8 @@ def MAPE(model, E_region):
     for key in E_region.keys():
         energy = E_region[key][2]
         inp = E_region[key][3]
-        pred = model.predict(np.array(inp))
+        trans = StandardScaler().fit_transform(np.array(inp))
+        pred = model.predict(trans)
         E_pred = energy[pred.argmin()]
         E_min  = min(energy)
         mape += abs(E_pred-E_min)/E_min

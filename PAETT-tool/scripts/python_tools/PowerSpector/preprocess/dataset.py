@@ -1,8 +1,12 @@
+from multiprocessing.context import Process
+from multiprocessing.queues import Queue
 import numpy as np
 import pickle
 import os
 import multiprocessing as mp
 import time
+from sklearn.preprocessing import StandardScaler
+from utils.Configuration import config
 
 class Filter:
     @staticmethod
@@ -222,8 +226,16 @@ class Filter:
         return res
 
 
+def _scale(args):
+    key = args[0]
+    labs = args[1]
+    inps = args[2]
+    labs_s = [ e / labs[-1] for e in labs ]
+    inps_s = StandardScaler().fit_transform(np.array(inps)).tolist()
+    return (key, labs_s, inps_s)
+
 class DataSet:
-    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True, enable_cct=True, with_data_enhancement=False):
+    def __init__(self, cmin, cmax, ucmin, ucmax, benchmarks=[], energy_threshold=5, enable_correction=True, enable_cct=True, with_data_enhancement=False, enable_scale=True):
         self.data = {}
         self.cmin = cmin
         self.cmax = cmax
@@ -236,6 +248,31 @@ class DataSet:
             print("Loading data from benchmarks...")
             self.load(benchmarks, enable_cct, with_data_enhancement=with_data_enhancement)
             self.filter(cmin, cmax, ucmin, ucmax, energy_threshold, enable_correction)
+            if enable_scale:
+                self.scale()
+            else:
+                print("[INFO] scaling disabled")
+
+    def scale(self):
+        print("[INFO] Scaling each region/CCT's data...")
+        data = {}
+        for b in self.data.keys():
+            print("[INFO] Scaling benchmark {0}".format(b))
+            I_train = []
+            O_train = []
+            E_region = self.data[b][2]
+            E_region_new = {}
+            with mp.Pool(config.get_max_thread()) as p:
+                res = p.map(_scale, [ (key, E_region[key][2], E_region[key][3]) for key in E_region.keys() ])
+                for r in res:
+                    key = r[0]
+                    labs_s = r[1]
+                    inps_s = r[2]
+                    E_region_new[key] = (E_region[key][0], E_region[key][1], labs_s, inps_s)
+                    O_train += labs_s
+                    I_train += inps_s
+            data[b] = (I_train, O_train, E_region_new)
+        self.data = data
 
     def loadCache(self, root):
         path = root+"/"+self.cachePath
@@ -253,7 +290,7 @@ class DataSet:
         print("Cache Found: {0}".format(path))
         with open(path, "rb") as f:
             data = pickle.load(f)
-        q.push( (root,data) )
+        q.put( (root,data) )
 
     def saveCache(self, data, root):
         path = root+"/"+self.cachePath
@@ -426,70 +463,6 @@ class DataSet:
                     E_region[key][3].append(dat[:-1])
             self.data[b] = (I_train, O_train, E_region)
             self.saveCache(self.data[b], b)
-        # for b in benchLoads:
-        #     i = i+1
-        #     I_train = []
-        #     O_train = []
-        #     E_region= {}
-        #     with open(b+"/metric.out","r") as f:
-        #         core=0
-        #         uncore=0
-        #         lines = f.readlines()
-        #         N = len(lines)
-        #         I = 0
-        #         preP = -1
-        #         cct_counter = {}
-        #         for line in lines:
-        #             if int(1000*float(I)/float(N))!=preP:
-        #                 print(spacer.format(i, n, b, 100*float(I)/float(N)), end='\r')
-        #                 preP = int(10000*float(I)/float(N))
-        #             I = I + 1
-        #             cont = line.split(';')
-        #             #print(contori)
-        #             if len(cont)==0:
-        #                 continue
-        #             if len(cont) >0:
-        #                 keys = cont[:-1]
-        #                 record = cont[-1].replace("\n","").split(' ')
-        #                 core = int(record[0])
-        #                 uncore = int(record[1])
-        #                 assert(core!=0 and uncore!=0)
-        #                 record = list(map(lambda x:float(x),record))
-        #                 key = ""
-        #                 if enable_cct:
-        #                     ikeys = 1
-        #                     Nkeys = len(keys)
-        #                     cct = "{0},{1},{2}".format(core, uncore, keys[0])
-        #                     if cct not in cct_counter.keys():
-        #                         cct_counter[cct] = 0
-        #                     elif ikeys==Nkeys:
-        #                         cct_counter[cct]+= 1
-        #                     cct+= "-"+str(cct_counter[cct])
-        #                     for k in keys[1:]:
-        #                         ikeys+= 1
-        #                         cct = cct + ';' + k
-        #                         if cct not in cct_counter.keys():
-        #                             cct_counter[cct] = 0
-        #                         elif ikeys==Nkeys:
-        #                             cct_counter[cct]+= 1
-        #                         cct+= "-"+str(cct_counter[cct])
-        #                     key = ','.join(cct.split(',')[2:])
-        #                 else:
-        #                     key = ";".join(keys)
-        #                 if key not in E_region.keys():
-        #                     E_region[key]=([],[],[],[])
-        #                     #print(key)
-        #                 I_train.append(record[:-1])
-        #                 O_train.append(record[-1])
-        #                 E_region[key][0].append(core)
-        #                 E_region[key][1].append(uncore)
-        #                 E_region[key][2].append(record[-1])
-        #                 E_region[key][3].append(record[:-1])
-        #             else:
-        #                 continue
-        #     self.data[b] = (I_train, O_train, E_region)
-        #     self.saveCache(self.data[b], b)
-        #     #print(res[b])
 
     def load(self, benchmarks, enable_cct=True, enable_cache=True, with_data_enhancement=False):
         n = len(benchmarks)
