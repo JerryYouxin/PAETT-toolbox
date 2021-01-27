@@ -341,7 +341,7 @@ def MLP_model_init(num=55, hidden=(16,16,16)):
     return Pipeline([('polinomial',PolynomialFeatures(2)),('std',StandardScaler()),('model',model)])
     #return model
 
-def GDBT_model_init():
+def GBDT_model_init():
     return Pipeline([('std',StandardScaler()),('model',GradientBoostingRegressor(loss='huber', learning_rate=0.1, n_estimators=80, subsample=0.8, max_depth=3, min_samples_split=130, min_samples_leaf=30, max_features=7, random_state=89))])
 
 def MAPE(model, E_region):
@@ -417,11 +417,11 @@ def MAPE1(model, E_region):
     return mape
 
 def Stack_model_init():
-    return StackingRegressor(estimators=[ ( 'GBDT',GDBT_model_init() ),( 'MLP',MLP_model_init() ) ], final_estimator=BaggingRegressor()  , n_jobs=-1)
+    return StackingRegressor(estimators=[ ( 'GBDT',GBDT_model_init() ),( 'MLP',MLP_model_init() ) ], final_estimator=BaggingRegressor()  , n_jobs=-1)
     #LassoCV()
 
 def mlxstack():
-    model1 = GDBT_model_init()
+    model1 = GBDT_model_init()
     model2 = MLP_model_init()
     svr = SVR(kernel='rbf')
     return stack(regressors=[model1,model2],meta_regressor=svr)
@@ -478,7 +478,7 @@ def train(data):
         O_train += data[b][1]
     I_train = np.array(I_train)
     O_train = np.array(O_train)
-    #model = GDBT_model_init()
+    #model = GBDT_model_init()
     model = MLP_model_init()
     #model = mlxstack()
     model.fit(I_train, O_train)

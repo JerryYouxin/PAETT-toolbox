@@ -140,7 +140,7 @@ class ModelBase:
         #     #print("111111111111111111")
         #     model = load("fine_tuneMLP.pkl")
         #     for b in datasets.keys():
-        #         #model = GDBT_model_init()
+        #         #model = GBDT_model_init()
         #         model = self.init()
         #         assert(model is not None)
         #         #model = Stack_model_init()

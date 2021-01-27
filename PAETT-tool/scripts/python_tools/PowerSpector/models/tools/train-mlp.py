@@ -161,7 +161,7 @@ def train_with_two(model, I_data_set_small, O_data_set_small, I_data_set_all, O_
 def pack_MLP(poly, std, model):
     return Pipeline([('poly',poly), ('std',std), ("model",model)])
 
-def GDBT_model_init():
+def GBDT_model_init():
     return Pipeline([('std',StandardScaler()),('model',GradientBoostingRegressor(loss='huber', learning_rate=0.1, n_estimators=80, subsample=0.8, max_depth=3, min_samples_split=130, min_samples_leaf=30, max_features=7, random_state=89))])
 
 def MAPE(model, E_region):
@@ -186,7 +186,7 @@ def LOOCV_test(data):
     datasets = LOOCV_split_dataset(data)
     for b in datasets.keys():
         # model = MLP_model_init()
-        model = GDBT_model_init()
+        model = GBDT_model_init()
         # extract dataset
         I_train = datasets[b][0][0]
         O_train = datasets[b][0][1]
