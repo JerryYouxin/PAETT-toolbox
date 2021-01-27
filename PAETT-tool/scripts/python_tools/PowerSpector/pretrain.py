@@ -1,5 +1,5 @@
 from preprocess.dataset import DataSet
-from models import MLPModel, GDBTModel, StdMLPModel
+from models import MLPModel, GDBTModel, StdMLPModel, NaiveMLPModel, NaiveGDBTModel
 from utils.Configuration import config
 
 import os
@@ -9,7 +9,9 @@ import argparse
 models = {
     'MLP': MLPModel,
     'GDBT': GDBTModel,
-    'StdMLP': StdMLPModel
+    'StdMLP': StdMLPModel,
+    'NaiveMLP': NaiveMLPModel,
+    'NaiveGDBT': NaiveGDBTModel
 }
 
 if __name__ == '__main__':
