@@ -17,7 +17,7 @@
 #include <omp.h>
 #include <iostream>
 using std::string;
-using namespace std;
+//using namespace std;
 
 #include <freqmod_API.h>
 
@@ -66,8 +66,8 @@ void PAETT_init() {
         string file3("/cpufreq/cpuinfo_cur_freq");
         string setfile;
         string curfile;
-        curfile = file1 + to_string(i) + file3;
-        setfile = file1 + to_string(i) + file2;
+        curfile = file1 + std::to_string(i) + file3;
+        setfile = file1 + std::to_string(i) + file2;
 
         CPUSetList[i] = fopen(setfile.c_str(), "w");
         CPUCurList[i] = fopen(curfile.c_str(), "r");
