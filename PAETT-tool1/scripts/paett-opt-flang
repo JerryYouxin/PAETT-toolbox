@@ -1,0 +1,8 @@
+#!/bin/bash
+# for CCT-Aware frequency modification, we still use instrumentation pass with cct-aware freqmod library
+# flang -Xclang -paett-freqmod -lpaett_freqmod -lx86_adapt -L`dirname $0`/../lib $@
+if [[ "$@" =~ " -c" ]]; then
+  flang -Xclang -paett-inst $@
+else
+  flang -Xclang -paett-inst -lpaett_freqmod_cct -L`dirname $0`/../lib $@
+fi

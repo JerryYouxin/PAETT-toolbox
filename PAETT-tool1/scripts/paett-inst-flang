@@ -1,0 +1,6 @@
+#!/bin/bash
+if [[ "$@" =~ " -c" ]]; then
+  flang -g -Xclang -paett-inst $@
+else
+  flang -g -Xclang -paett-inst -lpapi -lpaett_inst -L`dirname $0`/../lib $@
+fi

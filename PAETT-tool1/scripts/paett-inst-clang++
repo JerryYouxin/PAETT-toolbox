@@ -1,0 +1,6 @@
+#!/bin/bash
+if [[ "$@" =~ " -c" || "$@" =~ " -MM" ]]; then
+  clang++ -g -Xclang -paett-inst $@
+else
+  clang++ -g -Xclang -paett-inst -lpapi -lpaett_inst -L`dirname $0`/../lib $@
+fi
