@@ -105,11 +105,6 @@ def region_frequency_search(exe, keymap_fn, tnum, core, uncore, cct_file=None, c
                 # extract to list
                 lst = cct_tmp.extractToList(False)
                 for cont in lst:
-                    # # ignore very small regions
-                    # if cont[-1] < 2:
-                    #     ignoreLst.append(cont[0])
-                    # if cont[0] in ignoreLst:
-                    #     continue
                     if cont[0] in data.keys():
                         if cont[-1] < data[cont[0]][0]:
                             data[cont[0]][0] = cont[-1]
@@ -121,8 +116,7 @@ def region_frequency_search(exe, keymap_fn, tnum, core, uncore, cct_file=None, c
     # extract to list
     freqComm = []
     for key, d in data.items():
-        if key not in ignoreLst:
-            freqComm.append(d[1])
+        freqComm.append(d[1])
     print("\nFinish!")
     return freqComm
 
