@@ -77,7 +77,7 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
     assert(tnum>=0 && tnum<=NCPU);
     uint64_t step;
     switch(aff) {
-        case CLOSE:
+        case CLOSE: {
             for(uint64_t i=0;i<tnum;++i) {
                 PAETT_modCoreFreq(i,core);
             }
@@ -94,8 +94,8 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
                 // printf("[DEBUG] TUNE WITH AFFINITY: %ld uncore to %ld\n",i, MIN_UNCORE_VALIE);
                 PAETT_modUncoreFreq(i,MIN_UNCORE_VALIE);
             }
-            break;
-        case SPREAD:
+            break; }
+        case SPREAD: {
             uint64_t dies = min(tnum, PAETT_get_ndie());
             uint64_t corePerDie = PAETT_get_ncpu() / PAETT_get_ndie();
             uint64_t tnumPerDie = tnum / PAETT_get_ndie();
@@ -117,9 +117,9 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
             for(uint64_t i=tnum;i<PAETT_get_ndie();++i) {
                 PAETT_modUncoreFreq(i,MIN_CORE_VALIE);
             }
-            break;
+            break; }
 #ifdef ENABLE_ADAPTIVE
-        case ADAPTIVE:
+        case ADAPTIVE: {
             cpu_set_t *set;
             pid_t tid;
             tid = syscall(SYS_gettid);
@@ -150,7 +150,7 @@ void __tune_with_affinity(CPU_Affinity_t aff, uint64_t tnum, uint64_t core, uint
                 if(uncoreSet & (1<<i)) PAETT_modUncoreFreq(i, uncore);
                 else                   PAETT_modUncoreFreq(i, MIN_CORE_VALIE);
             }
-            break;
+            break; }
 #endif
         default:
             PAETT_modCoreFreqAll(core);
