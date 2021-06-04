@@ -1100,9 +1100,11 @@ def exec_static(exe, tnum, core, uncore, use_perf=False):
 
 def thread_search_static(exe, start, end, step):
     thread = 1
-    print("Running with 1 Thread")
-    emin, tmin = exec_static(exe, 1, config.get_max_core(), config.get_max_uncore())
+    emin = 10000000
+    tmin = 10000000
     if start==1:
+        print("Running with 1 Thread")
+        emin, tmin = exec_static(exe, 1, config.get_max_core(), config.get_max_uncore())
         start+=step
     for i in range(start, end+1, step):
         print("Running with {0} Thread".format(i))

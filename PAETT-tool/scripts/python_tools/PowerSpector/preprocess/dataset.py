@@ -231,7 +231,20 @@ def _scale(args):
     labs = args[1]
     inps = args[2]
     labs_s = [ e / labs[-1] for e in labs ]
-    inps_s = StandardScaler().fit_transform(np.array(inps)).tolist()
+    metrics = []
+    for line in inps:
+        metrics.append(line[2:])
+    metrics = np.transpose(StandardScaler().fit_transform(np.transpose(np.array(metrics)))).tolist()
+    coreMean = (8+22)/2
+    uncoreMean = (7+20)/2
+    coreStd = np.std([ c for c in range(8, 23) ])
+    uncoreStd = np.std([ f for f in range(7, 21) ])
+    inps_s = []
+    for i in range(len(inps)):
+        # print(inps[i][:2], coreMean, uncoreMean, coreStd, uncoreStd)
+        inps_s.append([(inps[i][0]-coreMean)/coreStd, (inps[i][1]-uncoreMean)/uncoreStd] + metrics[i])
+    # print(inps_s)
+    # inps_s = StandardScaler().fit_transform(np.array(inps)).tolist()
     return (key, labs_s, inps_s)
 
 class DataSet:

@@ -35,12 +35,26 @@ def predict_frequency(data, args):
     thread = data.data[0]
     metrics = data.data[1:-1]
     inp = []
-    for c in range(config.get_min_core(), config.get_max_core()+1):
-        for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
-            inp.append([c, uc]+metrics)
-    trans = np.array(inp)
+    trans = None
     if enable_scale:
-        trans = StandardScaler().fit_transform(trans)
+        metrics = np.transpose(StandardScaler().fit_transform(np.transpose(np.array([metrics])))).tolist()[0]
+        coreMean = (config.get_min_core()+config.get_max_core())/2
+        uncoreMean = (config.get_min_uncore()+config.get_max_uncore())/2
+        coreStd = np.std([ c for c in range(config.get_min_core(), config.get_max_core()+1) ])
+        uncoreStd = np.std([ f for f in range(config.get_min_uncore(), config.get_max_uncore()+1) ])
+        trans = []
+        for c in range(config.get_min_core(), config.get_max_core()+1):
+            for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
+                trans.append([(c-coreMean)/coreStd, (uc-uncoreMean)/uncoreStd] + metrics)
+                inp.append([c, uc])
+        trans = np.array(trans)
+    else:
+        for c in range(config.get_min_core(), config.get_max_core()+1):
+            for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
+                inp.append([c, uc]+metrics)
+        trans = np.array(inp)
+    # if enable_scale:
+    #     trans = StandardScaler().fit_transform(trans)
     pred = model.predict(trans)
     j = np.argmin(pred)
     core   = make_core(inp[j][0])
