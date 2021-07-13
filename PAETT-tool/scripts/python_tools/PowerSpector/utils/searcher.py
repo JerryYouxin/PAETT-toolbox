@@ -13,7 +13,7 @@ def get_cct_energy(cct):
     return cct.mergeBy(get_energy)
 
 def mergeMetrics(data1, data2):
-    return AdditionalData(data1.data[:-1] + data2.data[:-1] + [(float(data1.data[-1])+float(data2.data[-1]))/2])
+    return AdditionalData(data1.data[:-2] + data2.data[:-2] + [(float(data1.data[-2])+float(data2.data[-2]))/2] + [(float(data1.data[-1])+float(data2.data[-1]))/2])
 
 def reserveMinimalEnergy(data1, data2):
     if data1.data[-1] < data2.data[-1]:
