@@ -16,21 +16,23 @@ def convert_format(format):
     format=format.replace('<core>'  , '{1}')
     format=format.replace('<uncore>', '{2}')
     format=format.replace('<papi>'  , '{3}')
-    format=format.replace('<energy>', '{4}')
+    format=format.replace('<cycle>' , '{4}')
+    format=format.replace('<energy>', '{5}')
     return format
 
-def write_metrics(f, data, format="<thread> <core> <uncore> <papi> <energy>"):
+def write_metrics(f, data, format="<thread> <core> <uncore> <papi> <cycle> <energy>"):
     for cont in data:
         c = cont[1]
         u = cont[2]
         t = cont[3]
+        cycle = cont[-2]
         energy = cont[-1]
         papi = ""
-        if len(cont)>5:
-            for v in cont[4:-1]:
+        if len(cont)>6:
+            for v in cont[4:-2]:
                 papi += str(v)+' '
             papi = papi[:-1]
-        buff = cont[0]+';' + convert_format(format).format(t, c, u, papi, energy)
+        buff = cont[0]+';' + convert_format(format).format(t, c, u, papi, cycle, energy)
         f.write(buff+'\n')
 
 # tnum, core, uncore: -1 indicates iterating all possible configurations; 0 indicates using default; >0 indicates the specified configuration

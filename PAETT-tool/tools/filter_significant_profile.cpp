@@ -118,7 +118,7 @@ void __print_node(CallingContextLog* p, std::string pre) {
     for(int i=0;i<p->data.size;++i) {
         printf("%ld ", p->data.eventData[i]);
     }
-    printf("%lf\n", p->data.pkg_energy);
+    printf("%ld %lf\n", p->data.cycle, p->data.pkg_energy);
     for(auto CB=p->children.begin(), CE=p->children.end();CB!=CE;++CB) {
         print_significant(CB->second, pre+"  ");
     }
