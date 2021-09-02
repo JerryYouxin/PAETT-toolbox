@@ -1110,7 +1110,21 @@ def exec_static(exe, tnum, core, uncore, use_perf=False):
             time = float(cont[1].replace(',',''))
     return energy, time
 
-def thread_search_static(exe, start, end, step):
+def __energy_target(e, t, emin, tmin):
+    return emin is None or emin>e or (emin==e and tmin>t)
+
+def __edp_target(e, t, emin, tmin):
+    return emin is None or emin*tmin>e*t or (emin*tmin==e*t and emin>e)
+
+def get_target(target):
+    if target=="energy":
+        return __energy_target
+    elif target=="edp":
+        return __edp_target
+    else:
+        raise ValueError("unknown searching target!")
+
+def thread_search_static(exe, start, end, step, target_func=__energy_target):
     thread = 1
     emin = 10000000
     tmin = 10000000
@@ -1121,13 +1135,13 @@ def thread_search_static(exe, start, end, step):
     for i in range(start, end+1, step):
         print("Running with {0} Thread".format(i))
         e, t = exec_static(exe, i, config.get_max_core(), config.get_max_uncore())
-        if emin > e or (emin==e and tmin>t):
+        if target_func(e,t,emin,tmin):
             emin = e
             tmin = t
             thread = i
     return thread
 
-def static_search(exe, tnum=0, enable_thread=False):
+def static_search(exe, tnum=0, enable_thread=False, target_func=__energy_target):
     thread_list = [tnum]
     if enable_thread:
         thread_list = [ i for i in range(1,config.get_max_thread()) ]
@@ -1140,7 +1154,7 @@ def static_search(exe, tnum=0, enable_thread=False):
             for uc in range(config.get_min_uncore(), config.get_max_uncore()+1):
                 print("-- [Info] Trying core={0}, uncore={1}, thread={2}".format(c, uc, n))
                 e, t = exec_static(exe, n, c, uc)
-                if emin is None or emin>e or (emin==e and tmin>t):
+                if target_func(e,t,emin,tmin):
                     print("-- [Info] Update: thread={0}, core={1}, uncore={2} (energy={3}, time={4})".format(n,c,uc,e,t))
                     emin, tmin, tnum, core, uncore = e, t, n, c, uc
     return tnum, core, uncore
@@ -1227,7 +1241,7 @@ if __name__=="__main__":
     if use_static:
         print("Searching for optimal static configuration...")
         if use_thread_search:
-            thread_num = thread_search_static(exe, thread_begin, thread_end, thread_step)
+            thread_num = thread_search_static(exe, thread_begin, thread_end, thread_step, target_func=get_target(target))
         else:
             thread_num = int(os.environ['OMP_NUM_THREADS'])
             print("Thread Search disabled. Use OMP_NUM_THREADS={0}", thread_num)
@@ -1235,7 +1249,7 @@ if __name__=="__main__":
             print("[Info] Thread only enabled. Skip core/uncore frequency searching")
             tnum, core, uncore = thread_num, 0, 0
         else:
-            tnum, core, uncore = static_search(exe, thread_num)
+            tnum, core, uncore = static_search(exe, thread_num, target_func=get_target(target))
         print("** Final Result: thread={0}, core={1}, uncore={2} **".format(tnum, core, uncore))
         exit(0)
     if not (thread_only or use_hill or use_grid or use_exaustive):
