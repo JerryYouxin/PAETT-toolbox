@@ -687,7 +687,7 @@ def load_thread_cct(cct_fn):
         print("---------------")
     return cct
 
-def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
+def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1, target="energy"):
     if cct is None:
         cct = CallingContextTree()
     cct.reset_nodes()
@@ -698,6 +698,17 @@ def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
         core = config.get_max_core()
     if uncore<0:
         uncore = config.get_max_uncore()
+    def update_energy(p, energy, time):
+        return (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread)
+    def update_edp(p, energy, time):
+        return (p.additional is None) or (energy*time < p.additional[1]*p.additional[2]) or (energy*time==p.additional[1]*p.additional[2] and thread>p.thread)
+    update = None
+    if target=="energy":
+        update = update_energy
+    elif target=="edp":
+        update = update_edp
+    else:
+        raise ValueError("unknown target")
     # pointer of calling context tree used for iteration
     p = cct
     updated = False
@@ -720,7 +731,8 @@ def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
                 cont  = cont[5].split(' ')
                 for s in cont:
                     record.append(float(s))
-                metric = record[:-1]
+                metric = record[:-2]
+                time = record[-2]
                 energy = record[-1]
                 if key=='':
                     print("Error: ", key)
@@ -731,8 +743,8 @@ def load_cct_from_metrics(cct, metric_fn, thread=0, core=-1, uncore=-1):
                 # print(p, start, p.start_index, end, p.end_index)
                 assert(start==p.start_index)
                 assert(end==p.end_index)
-                if (p.additional is None) or (energy < p.additional[1]) or (energy==p.additional[1] and thread>p.thread):
-                    p.additional = (metric, energy)
+                if update(p, energy, time):
+                    p.additional = (metric, energy, time)
                     # if thread>0:
                     #     p.thread = thread if tnum>1 else 1
                     if thread>0:
@@ -974,7 +986,7 @@ def exec(exe, tnum, core, uncore, keymap_fn, out_dir='./', papi_events=[], cct_f
     return res_fn
 
 # [start, end], with step size *step*
-def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, enable_continue, thread_res_fn="thread.cct"):
+def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, enable_continue, thread_res_fn="thread.cct", target="energy"):
     # temporary metric output files
     out_dir = 'thread_metrics/'
     if enable_continue:
@@ -991,7 +1003,7 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, en
     res_fn = get_metric_name(out_dir, config.get_max_core(), config.get_max_uncore(), 1)
     if not (enable_continue or os.path.exists(res_fn)):
         res_fn = exec(exe, 1, config.get_max_core(), config.get_max_uncore(), keymap_fn, out_dir)
-    cct = load_cct_from_metrics(None, res_fn, 1)
+    cct = load_cct_from_metrics(None, res_fn, 1, target=target)
     energy = get_cct_energy(cct)
     if start==1:
         start = start + step
@@ -1007,7 +1019,7 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, en
         if enable_consistant_thread:
             # if consistant thread is enabled, we do not tune the thread number at runtime
             # as it may cause application's undefined behaviors (e.g. segfault, undesired low utility)
-            cct_tmp = load_cct_from_metrics(None, res_fn, i)
+            cct_tmp = load_cct_from_metrics(None, res_fn, i, target=target)
             # set global settings as temporary return values, need to be cleared outside
             cct_tmp.thread = i
             energy_tmp = get_cct_energy(cct_tmp)
@@ -1016,7 +1028,7 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, en
                 cct = cct_tmp
                 energy = energy_tmp
         else:
-            cct = load_cct_from_metrics(cct, res_fn, i)
+            cct = load_cct_from_metrics(cct, res_fn, i, target=target)
     cct.reset_nodes()
     if thread_res_fn is not None:
         print("Save thread optimized cct to ", thread_res_fn)
@@ -1025,7 +1037,7 @@ def thread_search(exe, keymap_fn, start, end, step, enable_consistant_thread, en
         #     cct.generate_frequency_commands(f, keyMap)
     return cct
 
-def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_thread=False):
+def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_thread=False, target="energy"):
     out_dir = 'metrics/'
     if enable_continue:
         if not os.path.exists(out_dir):
@@ -1053,7 +1065,7 @@ def exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=0, enable_
                 if not (enable_continue and os.path.exists(res_fn)):
                     res_fn = exec(exe, t, c, uc, keymap_fn, out_dir=out_dir, cct_fn=tmp_cct_fn, res_fn=res_fn)
                 # cct.print()
-                cct = load_cct_from_metrics(cct, res_fn, t, c, uc)
+                cct = load_cct_from_metrics(cct, res_fn, t, c, uc, target=target)
     cct.reset_nodes()
     cct.optimize()
     if VERBOSE:
@@ -1158,7 +1170,8 @@ if __name__=="__main__":
     enable_continue = False
     out_dir = "metrics"
     freq_command = None
-    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "keymap=","cct-src=","output=", "run=", "exaustive", "hill-climbing", "grid-search", "grid-size=", "max-iter=", "read-only", "thread-only", "tbegin=", "tend=", "tstep=", "static", "consistant-thread", "continue", "freqcomm="])
+    target = "energy"
+    opts, args = getopt(sys.argv[1:], "hvk:c:o:r:", ["help", "target=", "keymap=","cct-src=","output=", "run=", "exaustive", "hill-climbing", "grid-search", "grid-size=", "max-iter=", "read-only", "thread-only", "tbegin=", "tend=", "tstep=", "static", "consistant-thread", "continue", "freqcomm="])
     for opt, arg in opts:
         if opt in ("-h", "--help"):
             usage()
@@ -1203,6 +1216,8 @@ if __name__=="__main__":
         elif opt=="--freqcomm":
             freq_command = arg
             use_thread_search = False
+        elif opt=="--target":
+            target = arg
         else:
             print("Error: Unknown option: ", opt)
             usage()
@@ -1239,7 +1254,7 @@ if __name__=="__main__":
         print("[Info] Use Exaustive searching")
     keyMap = load_keyMap(keymap_fn)
     if use_thread_search:
-        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step, enable_consistant_thread, enable_continue)
+        cct = thread_search(exe, keymap_fn, thread_begin, thread_end, thread_step, enable_consistant_thread, enable_continue, target=target)
         if enable_consistant_thread:
             thread_num = cct.thread
         else:
@@ -1270,5 +1285,5 @@ if __name__=="__main__":
             if use_grid:
                 grid_search(exe, cct, keymap_fn, grid_size)
             if use_exaustive:
-                exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=thread_num)
+                exaustive_search(exe, cct, keymap_fn, enable_continue, thread_num=thread_num, target=target)
         generate_cct_frequency_commands(cct, out_fn)

@@ -134,7 +134,7 @@ def main():
     parser.add_argument('--step', help='step of number of threads when searching', type=int, default=default_step)
     parser.add_argument('--out', help='output file', default='metric.out')
     parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='')
-    parser.add_argument('--format', help='output format of metrics, including <thread>, <core>, <uncore>, <papi>, <energy>', default='<core> <uncore> <papi> <energy>')
+    parser.add_argument('--format', help='output format of metrics, including <thread> <core> <uncore> <papi> <cycle> <energy>', default='<core> <uncore> <papi> <energy>')
     args = parser.parse_args()
 
     check_point_dir = args.out.split('/')
