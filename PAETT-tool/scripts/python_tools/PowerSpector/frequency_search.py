@@ -241,8 +241,8 @@ def main():
         print("** Final Result: thread={0}, core={1}, uncore={2} **".format(tnum, core, uncore))
         exit(0)
     else:
-        print("The generated frequency commands will be written into: ", args.out)
-        with open(args.out, "w") as f:
+        print("The generated frequency commands will be written into: ", output)
+        with open(output, "w") as f:
             if args.scope == 'region':
                 best_thread = threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
                 if args.consistant:
