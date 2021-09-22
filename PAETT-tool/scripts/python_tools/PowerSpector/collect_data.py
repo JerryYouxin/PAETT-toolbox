@@ -135,6 +135,7 @@ def main():
     parser.add_argument('--out', help='output file', default='metric.out')
     parser.add_argument('--papi', help='PAPI counters needed for model input, only valid when model is provided. Delimited by ","', default='')
     parser.add_argument('--format', help='output format of metrics, including <thread> <core> <uncore> <papi> <cycle> <energy>', default='<core> <uncore> <papi> <energy>')
+    parser.add_argument('--target', help='collect target: energy, edp', default='energy')
     args = parser.parse_args()
 
     check_point_dir = args.out.split('/')
@@ -148,7 +149,7 @@ def main():
     assert(len(papi)>0)
     with open(args.out, "w") as f:
         print("The collected data will be written into: ", args.out)
-        best_thread = threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, generate_commands=True, cct_file='thread.cct')
+        best_thread = threadSearch(args.exe, args.keymap, [], args.ts, args.te, args.step, args.consistant, args.cont, target=args.target, generate_commands=True, cct_file='thread.cct')
         if args.consistant:
             data = collectData(args.exe, args.keymap, best_thread, -1, -1, enable_continue=args.cont, papi=papi, check_point_dir=check_point_dir)
         else:
