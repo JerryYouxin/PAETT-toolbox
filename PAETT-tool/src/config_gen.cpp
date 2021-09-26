@@ -313,6 +313,7 @@ void measure_uncore_latency(int n_iter) {
 
 int main() {
     PAETT_init();
+    PAETT_modOMPThread(PAETT_getNCPU());
     measure_freq_range();
     measure_overhead(500);
     measure_core_latency(500);
