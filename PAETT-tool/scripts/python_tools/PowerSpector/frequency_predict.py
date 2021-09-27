@@ -29,11 +29,11 @@ def predict_frequency(data, args):
     papi_num = args[2]
     enable_scale = args[3]
     # the number of metrics is not valid, so ignore this node
-    if len(data.data) != 2+papi_num:
+    if len(data.data) != 3+papi_num:
         print("Warning: Ignore data:", data, ", as the number of data does not matched user specification!")
         return AdditionalData([0, 0, 0])
     thread = data.data[0]
-    metrics = data.data[1:-1]
+    metrics = data.data[1:-2]
     inp = []
     trans = None
     if enable_scale:
